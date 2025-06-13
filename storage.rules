@@ -1,0 +1,40 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Notes uploads - authenticated access
+    match /notes/{userId}/{fileName} {
+      // Allow users to upload their own files
+      allow create: if request.auth != null && 
+                     request.auth.uid == userId &&
+                     request.resource.size < 10 * 1024 * 1024 &&
+                     (request.resource.contentType == 'application/pdf' || 
+                      request.resource.contentType == 'text/plain');
+      
+      // Allow users to read their own files or admins to read any file
+      allow read: if request.auth != null && 
+                   (request.auth.uid == userId || request.auth.token.admin == true);
+      
+      // Only admins can delete files
+      allow delete: if request.auth != null && request.auth.token.admin == true;
+    }
+    
+    // Public images - public read access
+    match /public/{imageType}/{fileName} {
+      // Anyone can read public images
+      allow read: if true;
+      
+      // Only authenticated users can upload public images
+      allow create: if request.auth != null &&
+                     request.resource.size < 5 * 1024 * 1024 &&
+                     request.resource.contentType.matches('image/.*');
+      
+      // Only admins can update or delete public images
+      allow update, delete: if request.auth != null && request.auth.token.admin == true;
+    }
+    
+    // Default deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+} 
