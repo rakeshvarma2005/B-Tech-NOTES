@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/AuthContext";
-import { db } from "@/lib/firebase";
-import { collection, query, where, getDocs, orderBy } from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,23 +10,23 @@ import { NotesUploadForm } from "@/components/NotesUploadForm";
 import { FileText, Upload, Clock, Check, X, Download, Eye } from "lucide-react";
 import { format } from "date-fns";
 
-interface NoteRequest {
+interface Note {
   id: string;
   title: string;
-  subject: string;
   description: string;
-  fileName: string;
-  fileURL: string;
+  file_url: string;
+  file_type: string;
+  thumbnail_url: string;
   status: "pending" | "approved" | "rejected";
-  createdAt: {
-    toDate: () => Date;
-  };
+  created_at: string;
+  courses: {
+    name: string;
+  } | null;
 }
 
 export default function MyNotes() {
   const { currentUser } = useAuth();
-  const [acceptedNotes, setAcceptedNotes] = useState<NoteRequest[]>([]);
-  const [pendingRequests, setPendingRequests] = useState<NoteRequest[]>([]);
+  const [notes, setNotes] = useState<Note[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
@@ -37,31 +36,16 @@ export default function MyNotes() {
     const fetchNotes = async () => {
       setIsLoading(true);
       try {
-        // Fetch accepted notes
-        const acceptedQuery = query(
-          collection(db, "acceptedNotes"),
-          where("userId", "==", currentUser.uid),
-          orderBy("createdAt", "desc")
-        );
-        const acceptedSnapshot = await getDocs(acceptedQuery);
-        const acceptedData = acceptedSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as NoteRequest[];
-        setAcceptedNotes(acceptedData);
+        // Fetch all notes for the current user
+        const { data, error } = await supabase
+          .from("notes")
+          .select("*, courses(name)")
+          .eq("user_id", currentUser.id)
+          .order("created_at", { ascending: false });
 
-        // Fetch pending requests
-        const requestsQuery = query(
-          collection(db, "noteRequests"),
-          where("userId", "==", currentUser.uid),
-          orderBy("createdAt", "desc")
-        );
-        const requestsSnapshot = await getDocs(requestsQuery);
-        const requestsData = requestsSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as NoteRequest[];
-        setPendingRequests(requestsData);
+        if (error) throw error;
+        
+        setNotes(data as Note[]);
       } catch (error) {
         console.error("Error fetching notes:", error);
       } finally {
@@ -100,18 +84,13 @@ export default function MyNotes() {
     }
   };
 
-  const getSubjectLabel = (subjectValue: string) => {
-    const subjects: Record<string, string> = {
-      mathematics: "Mathematics",
-      physics: "Physics",
-      chemistry: "Chemistry",
-      biology: "Biology",
-      computer_science: "Computer Science",
-      engineering: "Engineering",
-      other: "Other",
-    };
-    return subjects[subjectValue] || subjectValue;
+  const getSubjectLabel = (subject: string) => {
+    return subject || "Unknown Subject";
   };
+
+  // Filter notes by status
+  const acceptedNotes = notes.filter(note => note.status === "approved");
+  const pendingNotes = notes.filter(note => note.status === "pending" || note.status === "rejected");
 
   return (
     <div className="container max-w-5xl py-8">
@@ -165,7 +144,7 @@ export default function MyNotes() {
                       <div>
                         <CardTitle className="line-clamp-1">{note.title}</CardTitle>
                         <CardDescription className="mt-1">
-                          {getSubjectLabel(note.subject)}
+                          {getSubjectLabel(note.courses?.name || "")}
                         </CardDescription>
                       </div>
                       {getStatusBadge(note.status)}
@@ -180,19 +159,19 @@ export default function MyNotes() {
                     <div className="flex items-center text-xs text-muted-foreground">
                       <span>
                         Uploaded on{" "}
-                        {format(note.createdAt.toDate(), "MMM d, yyyy")}
+                        {format(new Date(note.created_at), "MMM d, yyyy")}
                       </span>
                     </div>
                   </CardContent>
                   <CardFooter className="flex justify-between">
                     <Button variant="outline" size="sm" asChild>
-                      <a href={note.fileURL} target="_blank" rel="noopener noreferrer">
+                      <a href={note.file_url} target="_blank" rel="noopener noreferrer">
                         <Eye className="mr-2 h-4 w-4" />
                         View
                       </a>
                     </Button>
                     <Button size="sm" asChild>
-                      <a href={note.fileURL} download={note.fileName}>
+                      <a href={note.file_url} download>
                         <Download className="mr-2 h-4 w-4" />
                         Download
                       </a>
@@ -209,7 +188,7 @@ export default function MyNotes() {
             <div className="flex justify-center py-12">
               <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
             </div>
-          ) : pendingRequests.length === 0 ? (
+          ) : pendingNotes.length === 0 ? (
             <div className="text-center py-12">
               <Clock className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
               <h3 className="mt-4 text-lg font-medium">No pending requests</h3>
@@ -223,41 +202,45 @@ export default function MyNotes() {
             </div>
           ) : (
             <div className="grid gap-6 md:grid-cols-2">
-              {pendingRequests.map((request) => (
-                <Card key={request.id}>
+              {pendingNotes.map((note) => (
+                <Card key={note.id}>
                   <CardHeader>
                     <div className="flex justify-between items-start">
                       <div>
-                        <CardTitle className="line-clamp-1">{request.title}</CardTitle>
+                        <CardTitle className="line-clamp-1">{note.title}</CardTitle>
                         <CardDescription className="mt-1">
-                          {getSubjectLabel(request.subject)}
+                          {getSubjectLabel(note.courses?.name || "")}
                         </CardDescription>
                       </div>
-                      {getStatusBadge(request.status)}
+                      {getStatusBadge(note.status)}
                     </div>
                   </CardHeader>
                   <CardContent>
-                    {request.description && (
+                    {note.description && (
                       <p className="text-sm text-muted-foreground line-clamp-2 mb-2">
-                        {request.description}
+                        {note.description}
                       </p>
                     )}
                     <div className="flex items-center text-xs text-muted-foreground">
                       <span>
                         Requested on{" "}
-                        {format(request.createdAt.toDate(), "MMM d, yyyy")}
+                        {format(new Date(note.created_at), "MMM d, yyyy")}
                       </span>
                     </div>
                   </CardContent>
-                  <CardFooter className="flex justify-between">
-                    <Button variant="outline" size="sm" asChild>
-                      <a href={request.fileURL} target="_blank" rel="noopener noreferrer">
-                        <Eye className="mr-2 h-4 w-4" />
-                        View
-                      </a>
-                    </Button>
-                    <div className="text-xs text-muted-foreground">
-                      Waiting for admin approval
+                  <CardFooter>
+                    <div className="flex items-center text-sm text-muted-foreground">
+                      {note.status === "pending" ? (
+                        <span className="flex items-center">
+                          <Clock className="mr-2 h-4 w-4 text-yellow-500" />
+                          Waiting for approval
+                        </span>
+                      ) : (
+                        <span className="flex items-center">
+                          <X className="mr-2 h-4 w-4 text-red-500" />
+                          Request rejected
+                        </span>
+                      )}
                     </div>
                   </CardFooter>
                 </Card>

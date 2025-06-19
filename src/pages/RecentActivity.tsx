@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/AuthContext";
-import { db } from "@/lib/firebase";
-import { collection, query, where, orderBy, limit, getDocs } from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -13,10 +12,18 @@ interface Activity {
   type: "upload" | "approval" | "rejection";
   title: string;
   subject: string;
-  timestamp: {
-    toDate: () => Date;
-  };
+  timestamp: string;
   status?: "pending" | "approved" | "rejected";
+}
+
+interface NoteWithCourse {
+  id: string;
+  title: string;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+  courses: {
+    name: string;
+  } | null;
 }
 
 export default function RecentActivity() {
@@ -30,52 +37,26 @@ export default function RecentActivity() {
     const fetchActivities = async () => {
       setIsLoading(true);
       try {
-        // Fetch recent uploads
-        const uploadsQuery = query(
-          collection(db, "noteRequests"),
-          where("userId", "==", currentUser.uid),
-          orderBy("createdAt", "desc"),
-          limit(10)
-        );
-        const uploadsSnapshot = await getDocs(uploadsQuery);
-        const uploadsData = uploadsSnapshot.docs.map((doc) => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            type: "upload",
-            title: data.title,
-            subject: data.subject,
-            timestamp: data.createdAt,
-            status: data.status,
-          };
-        });
+        // Fetch user's notes
+        const { data: notesData, error: notesError } = await supabase
+          .from("notes")
+          .select("id, title, status, created_at, courses(name)")
+          .eq("user_id", currentUser.id)
+          .order("created_at", { ascending: false })
+          .limit(20);
 
-        // Fetch recent approvals/rejections
-        const acceptedQuery = query(
-          collection(db, "acceptedNotes"),
-          where("userId", "==", currentUser.uid),
-          orderBy("createdAt", "desc"),
-          limit(10)
-        );
-        const acceptedSnapshot = await getDocs(acceptedQuery);
-        const acceptedData = acceptedSnapshot.docs.map((doc) => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            type: "approval",
-            title: data.title,
-            subject: data.subject,
-            timestamp: data.createdAt,
-            status: "approved",
-          };
-        });
+        if (notesError) throw notesError;
 
-        // Combine and sort by timestamp
-        const allActivities = [...uploadsData, ...acceptedData].sort((a, b) => {
-          return b.timestamp.toDate().getTime() - a.timestamp.toDate().getTime();
-        }).slice(0, 20);
+        const formattedActivities: Activity[] = (notesData as NoteWithCourse[]).map((note) => ({
+          id: note.id,
+          type: "upload" as const,
+          title: note.title,
+          subject: note.courses?.name || "Unknown",
+          timestamp: note.created_at,
+          status: note.status,
+        }));
 
-        setActivities(allActivities);
+        setActivities(formattedActivities);
       } catch (error) {
         console.error("Error fetching activities:", error);
       } finally {
@@ -118,17 +99,8 @@ export default function RecentActivity() {
     }
   };
 
-  const getSubjectLabel = (subjectValue: string) => {
-    const subjects: Record<string, string> = {
-      mathematics: "Mathematics",
-      physics: "Physics",
-      chemistry: "Chemistry",
-      biology: "Biology",
-      computer_science: "Computer Science",
-      engineering: "Engineering",
-      other: "Other",
-    };
-    return subjects[subjectValue] || subjectValue;
+  const getSubjectLabel = (subject: string) => {
+    return subject || "Unknown Subject";
   };
 
   const getStatusBadge = (status?: string) => {
@@ -212,7 +184,7 @@ export default function RecentActivity() {
                         <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
                           <span>{getSubjectLabel(activity.subject)}</span>
                           <span>•</span>
-                          <span>{format(activity.timestamp.toDate(), "MMM d, yyyy 'at' h:mm a")}</span>
+                          <span>{format(new Date(activity.timestamp), "MMM d, yyyy 'at' h:mm a")}</span>
                         </div>
                       </div>
                     </div>
@@ -261,7 +233,7 @@ export default function RecentActivity() {
                           <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
                             <span>{getSubjectLabel(activity.subject)}</span>
                             <span>•</span>
-                            <span>{format(activity.timestamp.toDate(), "MMM d, yyyy 'at' h:mm a")}</span>
+                            <span>{format(new Date(activity.timestamp), "MMM d, yyyy 'at' h:mm a")}</span>
                           </div>
                         </div>
                       </div>
@@ -285,18 +257,18 @@ export default function RecentActivity() {
                 <div className="flex justify-center py-12">
                   <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
                 </div>
-              ) : activities.filter(a => a.type === "approval" || (a.type === "upload" && a.status === "approved")).length === 0 ? (
+              ) : activities.filter(a => a.status === "approved").length === 0 ? (
                 <div className="text-center py-12">
                   <Check className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
                   <h3 className="mt-4 text-lg font-medium">No approved notes</h3>
                   <p className="mt-2 text-muted-foreground">
-                    You don't have any approved notes yet.
+                    None of your notes have been approved yet.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-4">
                   {activities
-                    .filter(a => a.type === "approval" || (a.type === "upload" && a.status === "approved"))
+                    .filter(a => a.status === "approved")
                     .map((activity) => (
                       <div key={activity.id} className="flex items-start gap-4 p-4 rounded-lg border">
                         <div className="mt-0.5">
@@ -305,14 +277,12 @@ export default function RecentActivity() {
                         <div className="flex-1">
                           <div className="flex items-center justify-between">
                             <p className="font-medium">{`Note "${activity.title}" was approved`}</p>
-                            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                              Approved
-                            </Badge>
+                            {getStatusBadge("approved")}
                           </div>
                           <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
                             <span>{getSubjectLabel(activity.subject)}</span>
                             <span>•</span>
-                            <span>{format(activity.timestamp.toDate(), "MMM d, yyyy 'at' h:mm a")}</span>
+                            <span>{format(new Date(activity.timestamp), "MMM d, yyyy 'at' h:mm a")}</span>
                           </div>
                         </div>
                       </div>

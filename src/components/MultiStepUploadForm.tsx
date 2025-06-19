@@ -1,8 +1,6 @@
 import { useState, useRef, ChangeEvent } from "react";
 import { useAuth } from "@/lib/AuthContext";
-import { db, storage } from "@/lib/firebase";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { Loader2, Upload, Info, AlertCircle } from "lucide-react";
 import { curriculum } from "@/data/curriculum";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface MultiStepUploadFormProps {
   onClose: () => void;
@@ -19,8 +18,7 @@ interface MultiStepUploadFormProps {
 export function MultiStepUploadForm({ onClose }: MultiStepUploadFormProps) {
   const { currentUser } = useAuth();
   const isAdmin = currentUser?.email === "admin@example.com" || 
-                  currentUser?.email === "rakeshvarma9704@gmail.com" || 
-                  currentUser?.uid === "qadmin";
+                  currentUser?.email === "rakeshvarma9704@gmail.com";
   const [currentStep, setCurrentStep] = useState<number>(1);
   
   // Form fields
@@ -32,6 +30,9 @@ export function MultiStepUploadForm({ onClose }: MultiStepUploadFormProps) {
   const [description, setDescription] = useState<string>("");
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [isImportantQuestions, setIsImportantQuestions] = useState<boolean>(false);
+  const [notesType, setNotesType] = useState<string>("regular");
+  const [labType, setLabType] = useState<string>("");
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -73,49 +74,67 @@ export function MultiStepUploadForm({ onClose }: MultiStepUploadFormProps) {
     }
     
     setIsUploading(true);
-    const storageFilePath = `notes/${currentUser.uid}/${Date.now()}_${file.name}`;
-    const storageRef = ref(storage, storageFilePath);
-    let downloadURL = "";
     
     try {
-      // 1. Upload file to Firebase Storage
-      const uploadResult = await uploadBytes(storageRef, file);
-      downloadURL = await getDownloadURL(uploadResult.ref);
+      // 1. Get course ID based on subject
+      // For this example, we'll just use the first course in the database
+      // In a real application, you would need to fetch or create the appropriate course
+      const { data: courseData, error: courseError } = await supabase
+        .from('courses')
+        .select('id')
+        .limit(1);
       
-      // 2. Create a request entry in the noteRequests collection
-      const docRef = await addDoc(collection(db, "noteRequests"), {
-        userId: currentUser.uid,
-        userEmail: currentUser.email,
-        title,
-        yearId: selectedYearId,
-        semesterId: selectedSemesterId,
-        subjectId: selectedSubjectId,
-        subject: selectedSubject?.code,
-        unitNumber: unitNumber || "N/A",
-        description,
-        fileURL: downloadURL,
-        fileName: file.name,
-        fileType: file.type,
-        fileSize: file.size,
-        createdAt: serverTimestamp(),
-        status: "pending" // pending, approved, rejected
-      });
+      if (courseError) throw courseError;
       
-      console.log("Document written with ID: ", docRef.id);
+      if (!courseData || courseData.length === 0) {
+        throw new Error("No courses found in the database");
+      }
+      
+      const courseId = courseData[0].id;
+      
+      // 2. Upload file to Supabase Storage
+      const filePath = `notes/${currentUser.id}/${Date.now()}_${file.name}`;
+      const { data: fileData, error: fileError } = await supabase.storage
+        .from('notes')
+        .upload(filePath, file);
+      
+      if (fileError) throw fileError;
+      
+      // 3. Get the public URL for the uploaded file
+      const { data: publicURLData } = supabase.storage
+        .from('notes')
+        .getPublicUrl(filePath);
+      
+      const fileUrl = publicURLData.publicUrl;
+      
+      // 4. Create a note entry in the notes table
+      const { data: noteData, error: noteError } = await supabase
+        .from('notes')
+        .insert({
+          user_id: currentUser.id,
+          course_id: courseId,
+          title: isImportantQuestions ? `${title} - Important Questions` : title,
+          description,
+          file_url: fileUrl,
+          file_type: file.type,
+          page_count: 0, // You could use a PDF library to get the actual page count
+          status: 'pending',
+          year_id: selectedYearId,
+          semester_id: selectedSemesterId,
+          subject_id: selectedSubjectId,
+          unit_number: unitNumber || null,
+          is_important_questions: isImportantQuestions,
+          notes_type: notesType,
+          lab_type: labType || null
+        })
+        .select();
+      
+      if (noteError) throw noteError;
+      
       toast.success("Note upload request submitted successfully");
       onClose();
     } catch (error) {
       console.error("Error uploading note:", error);
-      
-      // Clean up orphaned file if Firestore write failed
-      if (downloadURL) {
-        try {
-          await deleteObject(storageRef);
-        } catch (cleanupError) {
-          console.error("Failed to clean up orphaned file:", cleanupError);
-        }
-      }
-      
       toast.error("Failed to upload note. Please try again.");
     } finally {
       setIsUploading(false);
@@ -253,6 +272,9 @@ export function MultiStepUploadForm({ onClose }: MultiStepUploadFormProps) {
                   {selectedSemester?.subjects.map((subject) => (
                     <SelectItem key={subject.id} value={subject.id}>
                       {subject.name} ({subject.code})
+                      {subject.hasLab && (
+                        <span className="ml-2 inline-block bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full">Lab</span>
+                      )}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -260,37 +282,88 @@ export function MultiStepUploadForm({ onClose }: MultiStepUploadFormProps) {
             </div>
             
             <div className="space-y-2">
-              <Label htmlFor="unitNumber" className="text-white">Unit</Label>
-              <Select
-                value={unitNumber}
-                onValueChange={setUnitNumber}
-                required
-                disabled={!selectedSubjectId}
-              >
+              <Label htmlFor="unitNumber" className="text-white">Unit Number (Optional)</Label>
+              <Select value={unitNumber} onValueChange={setUnitNumber}>
                 <SelectTrigger className="bg-black border-gray-700 text-white">
-                  <SelectValue placeholder="Select a unit" />
+                  <SelectValue placeholder="Select Unit" />
                 </SelectTrigger>
                 <SelectContent className="bg-gray-900 text-white border-gray-700">
-                  {selectedSubjectId && Array.from({ length: 5 }, (_, idx) => idx + 1).map((unit) => (
-                    <SelectItem key={unit} value={unit.toString()}>
-                      Unit {unit}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="Unit 1">Unit 1</SelectItem>
+                  <SelectItem value="Unit 2">Unit 2</SelectItem>
+                  <SelectItem value="Unit 3">Unit 3</SelectItem>
+                  <SelectItem value="Unit 4">Unit 4</SelectItem>
+                  <SelectItem value="Unit 5">Unit 5</SelectItem>
+                  <SelectItem value="All Units">All Units</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
           
           <div className="space-y-2">
-            <Label htmlFor="description" className="text-white">Description</Label>
+            <Label htmlFor="notesType" className="text-white">Notes Type</Label>
+            <Select value={notesType} onValueChange={setNotesType}>
+              <SelectTrigger className="bg-black border-gray-700 text-white">
+                <SelectValue placeholder="Select notes type" />
+              </SelectTrigger>
+              <SelectContent className="bg-gray-900 text-white border-gray-700">
+                <SelectItem value="regular">Regular Notes</SelectItem>
+                <SelectItem value="important_questions">Important Questions</SelectItem>
+                <SelectItem value="previous_papers">Previous Papers</SelectItem>
+                <SelectItem value="reference_material">Reference Material</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          
+          <div className="flex items-center space-x-2">
+            <Checkbox 
+              id="importantQuestions" 
+              checked={isImportantQuestions}
+              onCheckedChange={(checked) => setIsImportantQuestions(checked === true)}
+              className="border-gray-500 data-[state=checked]:bg-purple-600"
+            />
+            <Label 
+              htmlFor="importantQuestions" 
+              className="text-sm font-medium leading-none text-white"
+            >
+              Mark as Important Questions
+            </Label>
+          </div>
+          
+          {selectedSubject?.hasLab && (
+            <div className="space-y-2">
+              <Label htmlFor="labType" className="text-white">Lab Type (Optional)</Label>
+              <Select value={labType} onValueChange={setLabType}>
+                <SelectTrigger className="bg-black border-gray-700 text-white">
+                  <SelectValue placeholder="Select lab type" />
+                </SelectTrigger>
+                <SelectContent className="bg-gray-900 text-white border-gray-700">
+                  <SelectItem value="Lab Manual">Lab Manual</SelectItem>
+                  <SelectItem value="Lab Records">Lab Records</SelectItem>
+                  <SelectItem value="Lab Viva Questions">Lab Viva Questions</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          
+          <div className="space-y-2">
+            <Label htmlFor="description" className="text-white">Description (Optional)</Label>
             <Textarea
               id="description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Provide a brief description of your notes"
-              rows={3}
-              className="bg-black border-gray-700 text-white resize-none"
+              placeholder="Add a brief description of your notes"
+              className="bg-black border-gray-700 text-white min-h-[100px]"
             />
+          </div>
+          
+          <div className="flex justify-end">
+            <Button 
+              type="button" 
+              onClick={nextStep}
+              className="bg-purple-600 hover:bg-purple-700 text-white"
+            >
+              Next
+            </Button>
           </div>
         </div>
       )}
@@ -298,48 +371,74 @@ export function MultiStepUploadForm({ onClose }: MultiStepUploadFormProps) {
       {/* Step 2: Upload */}
       {currentStep === 2 && (
         <div className="space-y-6">
-          <h2 className="text-xl font-semibold">Upload PDF</h2>
-          
-          <div className="border-2 border-dashed border-gray-700 rounded-lg p-8 flex flex-col items-center justify-center text-center">
-            <div className="w-16 h-16 rounded-full bg-gray-800 flex items-center justify-center mb-4">
-              <Upload className="h-8 w-8 text-gray-400" />
-            </div>
-            
-            <p className="text-white mb-1">Click to upload or drag and drop</p>
-            <p className="text-gray-500 text-sm mb-4">PDF (Max 10MB)</p>
-            
-            <Input
-              id="file"
+          <div className="border-2 border-dashed border-gray-700 rounded-lg p-8 text-center">
+            <input
               type="file"
+              id="file-upload"
               ref={fileInputRef}
               onChange={handleFileChange}
               accept=".pdf"
-              required
               className="hidden"
             />
             
-            <Button 
-              type="button" 
-              variant="outline" 
-              onClick={() => fileInputRef.current?.click()}
-              className="border-gray-700 text-white hover:bg-gray-800"
-            >
-              Browse Files
-            </Button>
-            
-            {file && (
-              <div className="mt-4 text-green-400">
-                Selected: {file.name} ({(file.size / (1024 * 1024)).toFixed(2)} MB)
+            {file ? (
+              <div className="space-y-4">
+                <div className="bg-gray-800 p-4 rounded-lg">
+                  <p className="font-medium text-white">{file.name}</p>
+                  <p className="text-sm text-gray-400">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                </div>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="border-gray-700 text-white hover:bg-gray-800"
+                >
+                  Change File
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex flex-col items-center justify-center">
+                  <Upload className="h-12 w-12 text-gray-500 mb-2" />
+                  <p className="text-lg font-medium text-white">Upload PDF File</p>
+                  <p className="text-sm text-gray-400">PDF files only, max 10MB</p>
+                </div>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="border-gray-700 text-white hover:bg-gray-800"
+                >
+                  Select File
+                </Button>
               </div>
             )}
           </div>
           
-          <div className="bg-gray-900 p-4 rounded-lg flex items-start gap-3">
-            <Info className="h-5 w-5 text-gray-400 mt-0.5" />
-            <p className="text-sm text-gray-400">
-              Make sure your uploaded document is a PDF file and doesn't exceed 10MB in size. 
-              The file will be reviewed by our team before being published.
+          <div className="flex items-center p-4 bg-blue-900/20 rounded-lg">
+            <Info className="h-5 w-5 text-blue-400 mr-3 flex-shrink-0" />
+            <p className="text-sm text-blue-300">
+              Your notes will be reviewed before being published. This typically takes 1-2 business days.
             </p>
+          </div>
+          
+          <div className="flex justify-between">
+            <Button 
+              type="button" 
+              variant="outline" 
+              onClick={prevStep}
+              className="border-gray-700 text-white hover:bg-gray-800"
+            >
+              Back
+            </Button>
+            <Button 
+              type="button" 
+              onClick={nextStep}
+              className="bg-purple-600 hover:bg-purple-700 text-white"
+              disabled={!file}
+            >
+              Next
+            </Button>
           </div>
         </div>
       )}
@@ -347,101 +446,78 @@ export function MultiStepUploadForm({ onClose }: MultiStepUploadFormProps) {
       {/* Step 3: Review */}
       {currentStep === 3 && (
         <div className="space-y-6">
-          <h2 className="text-xl font-semibold">Review Your Submission</h2>
-          
           <div className="bg-gray-900 p-6 rounded-lg space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-gray-400 text-sm">Title</p>
-                <p className="text-white">{title}</p>
-              </div>
-              <div>
-                <p className="text-gray-400 text-sm">Academic Year</p>
-                <p className="text-white">{selectedYear?.name}</p>
-              </div>
-              <div>
-                <p className="text-gray-400 text-sm">Semester</p>
-                <p className="text-white">{selectedSemester?.name}</p>
-              </div>
-              <div>
-                <p className="text-gray-400 text-sm">Subject</p>
-                <p className="text-white">{selectedSubject?.name} ({selectedSubject?.code})</p>
-              </div>
-              <div>
-                <p className="text-gray-400 text-sm">Unit Number</p>
-                <p className="text-white">{unitNumber || "N/A"}</p>
-              </div>
-              <div>
-                <p className="text-gray-400 text-sm">File</p>
-                <p className="text-white">{file?.name}</p>
-              </div>
+            <div>
+              <h3 className="text-lg font-medium text-white">{isImportantQuestions ? `${title} - Important Questions` : title}</h3>
+              <p className="text-sm text-gray-400">
+                {selectedSubject?.name} ({selectedSubject?.code})
+                {unitNumber && ` - ${unitNumber}`}
+                {labType && ` - ${labType}`}
+              </p>
+            </div>
+            
+            <div>
+              <h4 className="text-sm font-medium text-gray-300">Type:</h4>
+              <p className="text-sm text-gray-400">
+                {notesType === "regular" && "Regular Notes"}
+                {notesType === "important_questions" && "Important Questions"}
+                {notesType === "previous_papers" && "Previous Papers"}
+                {notesType === "reference_material" && "Reference Material"}
+                {isImportantQuestions && " (Marked as Important Questions)"}
+              </p>
             </div>
             
             {description && (
               <div>
-                <p className="text-gray-400 text-sm">Description</p>
-                <p className="text-white">{description}</p>
+                <h4 className="text-sm font-medium text-gray-300">Description:</h4>
+                <p className="text-sm text-gray-400">{description}</p>
+              </div>
+            )}
+            
+            {file && (
+              <div>
+                <h4 className="text-sm font-medium text-gray-300">File:</h4>
+                <p className="text-sm text-gray-400">
+                  {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
+                </p>
               </div>
             )}
           </div>
           
-          <div className="bg-gray-900 p-4 rounded-lg flex items-start gap-3">
-            <AlertCircle className="h-5 w-5 text-amber-400 mt-0.5" />
-            <p className="text-sm text-gray-400">
-              Please review your submission carefully. Once submitted, your notes will be reviewed by our team before being published.
+          <div className="flex items-center p-4 bg-amber-900/20 rounded-lg">
+            <AlertCircle className="h-5 w-5 text-amber-400 mr-3 flex-shrink-0" />
+            <p className="text-sm text-amber-300">
+              Please review your submission carefully. You won't be able to edit it after submission.
             </p>
+          </div>
+          
+          <div className="flex justify-between">
+            <Button 
+              type="button" 
+              variant="outline" 
+              onClick={prevStep}
+              className="border-gray-700 text-white hover:bg-gray-800"
+            >
+              Back
+            </Button>
+            <Button 
+              type="button" 
+              onClick={handleSubmit}
+              disabled={isUploading}
+              className="bg-purple-600 hover:bg-purple-700 text-white"
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                "Submit"
+              )}
+            </Button>
           </div>
         </div>
       )}
-      
-      {/* Navigation Buttons */}
-      <div className="flex justify-between mt-8">
-        {currentStep > 1 ? (
-          <Button 
-            type="button" 
-            variant="outline"
-            onClick={prevStep}
-            className="border-gray-700 text-white hover:bg-gray-800"
-          >
-            Back
-          </Button>
-        ) : (
-          <Button 
-            type="button" 
-            variant="outline"
-            onClick={onClose}
-            className="border-gray-700 text-white hover:bg-gray-800"
-          >
-            Cancel
-          </Button>
-        )}
-        
-        {currentStep < 3 ? (
-          <Button 
-            type="button"
-            onClick={nextStep}
-            className="bg-purple-600 hover:bg-purple-700 text-white"
-          >
-            {currentStep === 2 ? "Continue to Review" : "Continue"}
-          </Button>
-        ) : (
-          <Button 
-            type="button"
-            onClick={handleSubmit}
-            disabled={isUploading}
-            className="bg-purple-600 hover:bg-purple-700 text-white"
-          >
-            {isUploading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Uploading...
-              </>
-            ) : (
-              "Submit"
-            )}
-          </Button>
-        )}
-      </div>
     </div>
   );
 }

@@ -1,18 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/AuthContext";
-import { db } from "@/lib/firebase";
-import { 
-  collection, 
-  query, 
-  getDocs, 
-  doc, 
-  updateDoc, 
-  deleteDoc, 
-  orderBy, 
-  where,
-  addDoc,
-  serverTimestamp
-} from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -42,174 +30,166 @@ import { format } from "date-fns";
 import { toast } from "sonner";
 import { curriculum } from "@/data/curriculum";
 
-interface NoteRequest {
+interface Note {
   id: string;
-  userId: string;
-  userEmail: string;
+  user_id: string;
+  course_id: string;
   title: string;
-  subject: string;
-  yearId?: string;
-  semesterId?: string;
-  subjectId?: string;
   description: string;
-  fileName: string;
-  fileURL: string;
-  fileType: string;
-  fileSize: number;
+  file_url: string;
+  thumbnail_url: string;
+  file_type: string;
+  page_count: number;
   status: "pending" | "approved" | "rejected";
-  createdAt: {
-    toDate: () => Date;
+  created_at: string;
+  updated_at: string;
+  profiles: {
+    email: string;
+    full_name: string;
+  };
+  courses: {
+    name: string;
+    code: string;
+    year: number;
+    semester: number;
+    departments: {
+      name: string;
+      code: string;
+    };
   };
 }
 
 export default function AdminPanel() {
   const { currentUser } = useAuth();
-  const [noteRequests, setNoteRequests] = useState<NoteRequest[]>([]);
-  const [acceptedNotes, setAcceptedNotes] = useState<NoteRequest[]>([]);
+  const [pendingNotes, setPendingNotes] = useState<Note[]>([]);
+  const [approvedNotes, setApprovedNotes] = useState<Note[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedRequest, setSelectedRequest] = useState<NoteRequest | null>(null);
+  const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0); // Used to trigger a refresh
 
   const isAdmin = currentUser?.email === "admin@example.com" || 
-                  currentUser?.email === "rakeshvarma9704@gmail.com" || 
-                  currentUser?.uid === "qadmin";
+                  currentUser?.email === "rakeshvarma9704@gmail.com";
 
   useEffect(() => {
     if (!currentUser || !isAdmin) return;
 
-    const fetchRequests = async () => {
+    const fetchNotes = async () => {
       setIsLoading(true);
       try {
-        // Fetch pending requests
-        const requestsQuery = query(
-          collection(db, "noteRequests"),
-          where("status", "==", "pending"),
-          orderBy("createdAt", "desc")
-        );
-        const requestsSnapshot = await getDocs(requestsQuery);
-        const requestsData = requestsSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as NoteRequest[];
-        setNoteRequests(requestsData);
+        // Fetch pending notes
+        const { data: pendingData, error: pendingError } = await supabase
+          .from("notes")
+          .select(`
+            *,
+            profiles (email, full_name),
+            courses (
+              name, code, year, semester,
+              departments (name, code)
+            )
+          `)
+          .eq("status", "pending")
+          .order("created_at", { ascending: false });
 
-        // Fetch accepted notes
-        const acceptedQuery = query(
-          collection(db, "acceptedNotes"),
-          orderBy("createdAt", "desc")
-        );
-        const acceptedSnapshot = await getDocs(acceptedQuery);
-        const acceptedData = acceptedSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as NoteRequest[];
-        setAcceptedNotes(acceptedData);
+        if (pendingError) throw pendingError;
+        setPendingNotes(pendingData as Note[]);
+
+        // Fetch approved notes
+        const { data: approvedData, error: approvedError } = await supabase
+          .from("notes")
+          .select(`
+            *,
+            profiles (email, full_name),
+            courses (
+              name, code, year, semester,
+              departments (name, code)
+            )
+          `)
+          .eq("status", "approved")
+          .order("created_at", { ascending: false });
+
+        if (approvedError) throw approvedError;
+        setApprovedNotes(approvedData as Note[]);
       } catch (error) {
-        console.error("Error fetching requests:", error);
-        toast.error("Failed to fetch note requests");
+        console.error("Error fetching notes:", error);
+        toast.error("Failed to fetch notes");
       } finally {
         setIsLoading(false);
       }
     };
 
-    fetchRequests();
+    fetchNotes();
   }, [currentUser, isAdmin, refreshKey]);
 
   const handleRefresh = () => {
     setRefreshKey(prev => prev + 1);
   };
 
-  const handleAcceptRequest = async (request: NoteRequest) => {
+  const handleApproveNote = async (note: Note) => {
     if (!isAdmin) {
       toast.error("You don't have permission to perform this action");
       return;
     }
 
     try {
-      // 1. Add to acceptedNotes collection
-      await addDoc(collection(db, "acceptedNotes"), {
-        ...request,
-        status: "approved",
-        approvedAt: serverTimestamp(),
-        approvedBy: currentUser?.uid
-      });
+      // Update note status to approved
+      const { error } = await supabase
+        .from("notes")
+        .update({
+          status: "approved",
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", note.id);
 
-      // 2. Update status in noteRequests collection
-      const requestRef = doc(db, "noteRequests", request.id);
-      await updateDoc(requestRef, {
-        status: "approved"
-      });
+      if (error) throw error;
 
-      // 3. Update UI
-      setNoteRequests(noteRequests.filter(req => req.id !== request.id));
-      toast.success("Note request approved successfully");
+      // Update UI
+      setPendingNotes(pendingNotes.filter(n => n.id !== note.id));
+      toast.success("Note approved successfully");
 
       // Refresh the data
       handleRefresh();
     } catch (error) {
-      console.error("Error approving request:", error);
-      toast.error("Failed to approve note request");
+      console.error("Error approving note:", error);
+      toast.error("Failed to approve note");
     }
   };
 
-  const handleRejectRequest = async (request: NoteRequest) => {
+  const handleRejectNote = async (note: Note) => {
     if (!isAdmin) {
       toast.error("You don't have permission to perform this action");
       return;
     }
 
     try {
-      // Update status in noteRequests collection
-      const requestRef = doc(db, "noteRequests", request.id);
-      await updateDoc(requestRef, {
-        status: "rejected",
-        rejectedAt: serverTimestamp(),
-        rejectedBy: currentUser?.uid
-      });
+      // Update note status to rejected
+      const { error } = await supabase
+        .from("notes")
+        .update({
+          status: "rejected",
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", note.id);
+
+      if (error) throw error;
 
       // Update UI
-      setNoteRequests(noteRequests.filter(req => req.id !== request.id));
+      setPendingNotes(pendingNotes.filter(n => n.id !== note.id));
       setIsRejectDialogOpen(false);
-      setSelectedRequest(null);
-      toast.success("Note request rejected");
+      setSelectedNote(null);
+      toast.success("Note rejected");
     } catch (error) {
-      console.error("Error rejecting request:", error);
-      toast.error("Failed to reject note request");
+      console.error("Error rejecting note:", error);
+      toast.error("Failed to reject note");
     }
   };
 
   // Get subject label from curriculum
-  const getSubjectLabel = (request: NoteRequest) => {
-    // If we have yearId, semesterId and subjectId, use curriculum to get the subject name
-    if (request.yearId && request.semesterId && request.subjectId) {
-      const year = curriculum.find(y => y.id === request.yearId);
-      const semester = year?.semesters.find(s => s.id === request.semesterId);
-      const subject = semester?.subjects.find(s => s.id === request.subjectId);
-      
-      if (subject) {
-        if (subject.isImportantQuestions) {
-          return (
-            <span className="font-medium">
-              <span className="text-amber-600">🔥 {subject.name}</span> ({subject.code})
-            </span>
-          );
-        }
-        return `${subject.name} (${subject.code})`;
-      }
+  const getSubjectLabel = (note: Note) => {
+    if (note.courses) {
+      return `${note.courses.name} (${note.courses.code})`;
     }
-    
-    // Fallback to the subject code or default mapping
-    const subjects: Record<string, string> = {
-      mathematics: "Mathematics",
-      physics: "Physics",
-      chemistry: "Chemistry",
-      biology: "Biology",
-      computer_science: "Computer Science",
-      engineering: "Engineering",
-      other: "Other",
-    };
-    return subjects[request.subject] || request.subject;
+    return "Unknown Subject";
   };
 
   if (!isAdmin) {
@@ -235,9 +215,9 @@ export default function AdminPanel() {
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="requests" className="relative">
             Pending Requests
-            {noteRequests.length > 0 && (
+            {pendingNotes.length > 0 && (
               <Badge variant="destructive" className="ml-2">
-                {noteRequests.length}
+                {pendingNotes.length}
               </Badge>
             )}
           </TabsTrigger>
@@ -249,24 +229,24 @@ export default function AdminPanel() {
             <div className="flex justify-center py-12">
               <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
             </div>
-          ) : noteRequests.length === 0 ? (
+          ) : pendingNotes.length === 0 ? (
             <div className="text-center py-12">
               <Clock className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
               <h3 className="mt-4 text-lg font-medium">No pending requests</h3>
               <p className="mt-2 text-muted-foreground">
-                There are no pending note requests to review.
+                There are no notes waiting for approval.
               </p>
             </div>
           ) : (
             <div className="grid gap-6 md:grid-cols-2">
-              {noteRequests.map((request) => (
-                <Card key={request.id}>
+              {pendingNotes.map((note) => (
+                <Card key={note.id}>
                   <CardHeader>
                     <div className="flex justify-between items-start">
                       <div>
-                        <CardTitle className="line-clamp-1">{request.title}</CardTitle>
+                        <CardTitle className="line-clamp-1">{note.title}</CardTitle>
                         <CardDescription className="mt-1">
-                          {getSubjectLabel(request)}
+                          {getSubjectLabel(note)}
                         </CardDescription>
                       </div>
                       <Badge variant="outline" className="flex items-center gap-1 bg-yellow-50 text-yellow-700 border-yellow-200">
@@ -276,72 +256,65 @@ export default function AdminPanel() {
                     </div>
                   </CardHeader>
                   <CardContent>
-                    {request.description && (
+                    {note.description && (
                       <p className="text-sm text-muted-foreground line-clamp-2 mb-2">
-                        {request.description}
+                        {note.description}
                       </p>
                     )}
-                    <div className="flex flex-col gap-1 text-xs">
-                      <div className="text-muted-foreground">
-                        Submitted by: {request.userEmail}
-                      </div>
-                      <div className="text-muted-foreground">
-                        Requested on: {format(request.createdAt.toDate(), "MMM d, yyyy")}
-                      </div>
-                      <div className="text-muted-foreground">
-                        File: {request.fileName} ({(request.fileSize / 1024 / 1024).toFixed(2)} MB)
-                      </div>
+                    <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+                      <span>
+                        Uploaded by{" "}
+                        <span className="font-medium">{note.profiles?.email}</span>
+                      </span>
+                      <span>
+                        Uploaded on{" "}
+                        {format(new Date(note.created_at), "MMM d, yyyy")}
+                      </span>
                     </div>
                   </CardContent>
-                  <CardFooter className="flex flex-col gap-2">
-                    <div className="flex w-full gap-2">
-                      <Button variant="outline" size="sm" className="flex-1" asChild>
-                        <a href={request.fileURL} target="_blank" rel="noopener noreferrer">
+                  <CardFooter className="flex justify-between">
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button variant="outline" size="sm">
                           <Eye className="mr-2 h-4 w-4" />
-                          View
-                        </a>
-                      </Button>
-                    </div>
-                    <div className="flex w-full gap-2">
+                          Preview
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-4xl">
+                        <DialogHeader>
+                          <DialogTitle>{note.title}</DialogTitle>
+                          <DialogDescription>
+                            {getSubjectLabel(note)} • Uploaded by {note.profiles?.email}
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="mt-4">
+                          <iframe 
+                            src={note.file_url} 
+                            className="w-full h-[70vh] border rounded-md"
+                            title={note.title}
+                          />
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                    <div className="flex gap-2">
                       <Button 
-                        variant="default" 
                         size="sm" 
-                        className="flex-1 bg-green-600 hover:bg-green-700"
-                        onClick={() => handleAcceptRequest(request)}
+                        variant="destructive"
+                        onClick={() => {
+                          setSelectedNote(note);
+                          setIsRejectDialogOpen(true);
+                        }}
+                      >
+                        <X className="mr-2 h-4 w-4" />
+                        Reject
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        onClick={() => handleApproveNote(note)}
                       >
                         <Check className="mr-2 h-4 w-4" />
-                        Accept
+                        Approve
                       </Button>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button 
-                            variant="destructive" 
-                            size="sm" 
-                            className="flex-1"
-                          >
-                            <X className="mr-2 h-4 w-4" />
-                            Reject
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Reject Note Request</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Are you sure you want to reject this note request? 
-                              This action cannot be undone.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction 
-                              onClick={() => handleRejectRequest(request)}
-                              className="bg-red-600 hover:bg-red-700"
-                            >
-                              Reject
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
                     </div>
                   </CardFooter>
                 </Card>
@@ -355,17 +328,17 @@ export default function AdminPanel() {
             <div className="flex justify-center py-12">
               <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
             </div>
-          ) : acceptedNotes.length === 0 ? (
+          ) : approvedNotes.length === 0 ? (
             <div className="text-center py-12">
               <FileText className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
               <h3 className="mt-4 text-lg font-medium">No approved notes</h3>
               <p className="mt-2 text-muted-foreground">
-                There are no approved notes in the system yet.
+                There are no approved notes yet.
               </p>
             </div>
           ) : (
             <div className="grid gap-6 md:grid-cols-2">
-              {acceptedNotes.map((note) => (
+              {approvedNotes.map((note) => (
                 <Card key={note.id}>
                   <CardHeader>
                     <div className="flex justify-between items-start">
@@ -387,22 +360,41 @@ export default function AdminPanel() {
                         {note.description}
                       </p>
                     )}
-                    <div className="flex flex-col gap-1 text-xs">
-                      <div className="text-muted-foreground">
-                        Submitted by: {note.userEmail}
-                      </div>
-                      <div className="text-muted-foreground">
-                        Approved on: {format(note.createdAt.toDate(), "MMM d, yyyy")}
-                      </div>
+                    <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+                      <span>
+                        Uploaded by{" "}
+                        <span className="font-medium">{note.profiles?.email}</span>
+                      </span>
+                      <span>
+                        Approved on{" "}
+                        {format(new Date(note.updated_at), "MMM d, yyyy")}
+                      </span>
                     </div>
                   </CardContent>
-                  <CardFooter className="flex justify-between">
-                    <Button variant="outline" size="sm" asChild>
-                      <a href={note.fileURL} target="_blank" rel="noopener noreferrer">
-                        <Eye className="mr-2 h-4 w-4" />
-                        View
-                      </a>
-                    </Button>
+                  <CardFooter>
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button variant="outline" size="sm">
+                          <Eye className="mr-2 h-4 w-4" />
+                          Preview
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-4xl">
+                        <DialogHeader>
+                          <DialogTitle>{note.title}</DialogTitle>
+                          <DialogDescription>
+                            {getSubjectLabel(note)} • Uploaded by {note.profiles?.email}
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="mt-4">
+                          <iframe 
+                            src={note.file_url} 
+                            className="w-full h-[70vh] border rounded-md"
+                            title={note.title}
+                          />
+                        </div>
+                      </DialogContent>
+                    </Dialog>
                   </CardFooter>
                 </Card>
               ))}
@@ -410,6 +402,27 @@ export default function AdminPanel() {
           )}
         </TabsContent>
       </Tabs>
+
+      {/* Reject confirmation dialog */}
+      <AlertDialog open={isRejectDialogOpen} onOpenChange={setIsRejectDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reject Note</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to reject this note? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => selectedNote && handleRejectNote(selectedNote)}
+            >
+              Reject
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

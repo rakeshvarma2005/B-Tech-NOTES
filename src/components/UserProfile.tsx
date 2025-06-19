@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/AuthContext";
-import { db } from "@/lib/firebase";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 import { motion } from "framer-motion";
 import { buttonHover, buttonTap } from "@/lib/animations";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -29,23 +28,47 @@ export default function UserProfile() {
 
   // Check if user is admin
   const isAdmin = currentUser?.email === "admin@example.com" || 
-                  currentUser?.email === "rakeshvarma9704@gmail.com" || 
-                  currentUser?.uid === "qadmin";
+                  currentUser?.email === "rakeshvarma9704@gmail.com";
 
-  // Listen for pending note requests if user is admin
+  // Fetch pending note requests if user is admin
   useEffect(() => {
     if (!currentUser || !isAdmin) return;
 
-    const requestsQuery = query(
-      collection(db, "noteRequests"),
-      where("status", "==", "pending")
-    );
+    const fetchPendingRequests = async () => {
+      const { data, error, count } = await supabase
+        .from("notes")
+        .select("*", { count: 'exact' })
+        .eq("status", "pending");
 
-    const unsubscribe = onSnapshot(requestsQuery, (snapshot) => {
-      setPendingRequestsCount(snapshot.docs.length);
-    });
+      if (error) {
+        console.error("Error fetching pending requests:", error);
+        return;
+      }
 
-    return () => unsubscribe();
+      setPendingRequestsCount(count || 0);
+    };
+
+    fetchPendingRequests();
+
+    // Set up realtime subscription for notes table
+    const subscription = supabase
+      .channel('notes_changes')
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'notes',
+          filter: 'status=eq.pending'
+        }, 
+        () => {
+          fetchPendingRequests();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [currentUser, isAdmin]);
 
   const handleLogin = () => {
@@ -109,13 +132,13 @@ export default function UserProfile() {
               whileTap={buttonTap}
             >
               <Avatar>
-                <AvatarImage src={currentUser.photoURL || ""} alt={currentUser.email || "User"} />
+                <AvatarImage src={currentUser.user_metadata?.avatar_url || ""} alt={currentUser.email || "User"} />
                 <AvatarFallback className="bg-primary text-primary-foreground">
                   {getUserInitials()}
                 </AvatarFallback>
               </Avatar>
               <span className="hidden md:inline-block text-sm font-medium">
-                {currentUser.displayName || currentUser.email?.split("@")[0]}
+                {currentUser.user_metadata?.full_name || currentUser.email?.split("@")[0]}
               </span>
               {isAdmin && pendingRequestsCount > 0 && (
                 <Badge variant="destructive" className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 text-xs">

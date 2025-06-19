@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Supabase Connection Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <h1>Supabase Connection Test</h1>
+  <button id="testBtn">Test Connection</button>
+  <pre id="results"></pre>
+
+  <script>
+    document.getElementById('testBtn').addEventListener('click', async () => {
+      const resultsEl = document.getElementById('results');
+      resultsEl.textContent = 'Testing connection...';
+      
+      try {
+        const supabaseUrl = 'https://qbeyhyvwbspfibkzqllm.supabase.co';
+        const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFiZXloeXZ3YnNwZmlia3pxbGxtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTk5MjM0NjgsImV4cCI6MjAzNTQ5OTQ2OH0.Hs-7-wqYhHQGDxXSbXH-yxJxVzRBxYm-Oy7Nt9Fy6Yw';
+        
+        resultsEl.textContent += `\nURL: ${supabaseUrl}`;
+        resultsEl.textContent += `\nKey length: ${supabaseAnonKey.length}`;
+        
+        const supabase = window.supabase.createClient(supabaseUrl, supabaseAnonKey);
+        
+        // Try to get the current session
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError) {
+          resultsEl.textContent += `\nSession error: ${JSON.stringify(sessionError)}`;
+        } else {
+          resultsEl.textContent += `\nSession: ${JSON.stringify(sessionData)}`;
+        }
+        
+        // Try a simple query
+        const { data, error } = await supabase
+          .from('courses')
+          .select('id')
+          .limit(1);
+          
+        if (error) {
+          resultsEl.textContent += `\nQuery error: ${JSON.stringify(error)}`;
+        } else {
+          resultsEl.textContent += `\nQuery result: ${JSON.stringify(data)}`;
+        }
+        
+      } catch (err) {
+        resultsEl.textContent += `\nError: ${err.message}`;
+      }
+    });
+  </script>
+</body>
+</html> 

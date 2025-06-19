@@ -5,6 +5,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/lib/AuthContext";
 import ProtectedRoute from "@/components/Auth/ProtectedRoute";
+import { useEffect, useState } from "react";
+import { initializeDatabase } from "@/lib/dbFunctions";
+import { testSupabaseConnection } from "@/lib/supabase";
+import { toast } from "sonner";
 
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
@@ -18,6 +22,7 @@ import Settings from "./pages/Settings";
 import RecentActivity from "./pages/RecentActivity";
 import UploadNotes from "./pages/UploadNotes";
 import NotesExample from "./pages/NotesExample";
+import AuthCallback from "./pages/auth/callback";
 
 const queryClient = new QueryClient();
 
@@ -34,6 +39,56 @@ const RedirectIfAuthenticated = ({ children }: { children: React.ReactNode }) =>
 
 const AppRoutes = () => {
   const { currentUser } = useAuth();
+  const [isInitializing, setIsInitializing] = useState(true);
+  
+  useEffect(() => {
+    // Test Supabase connection first
+    const testConnection = async () => {
+      try {
+        await testSupabaseConnection();
+      } catch (error) {
+        console.error("Error testing Supabase connection:", error);
+        toast.error("Failed to connect to Supabase. Please check your API credentials.");
+      }
+    };
+    
+    testConnection();
+    
+    // Initialize database only if user is authenticated
+    const setupDatabase = async () => {
+      setIsInitializing(true);
+      
+      try {
+        if (currentUser) {
+          const result = await initializeDatabase();
+          if (!result) {
+            toast.warning("Some database operations may be restricted. Please check your Supabase setup.");
+          }
+        } else {
+          console.log("User not authenticated. Database initialization skipped.");
+        }
+      } catch (error) {
+        console.error("Error initializing database:", error);
+        toast.error("Failed to initialize database. Some features may not work correctly.");
+      } finally {
+        setIsInitializing(false);
+      }
+    };
+    
+    setupDatabase();
+  }, [currentUser]);
+  
+  // Show loading indicator while initializing
+  if (isInitializing && currentUser) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <h2 className="text-2xl font-bold mb-4">Initializing application...</h2>
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary mx-auto"></div>
+        </div>
+      </div>
+    );
+  }
   
   return (
     <Routes>
@@ -43,6 +98,9 @@ const AppRoutes = () => {
           <Navigate to="/dashboard" replace /> : 
           <Navigate to="/login" replace />
       } />
+      
+      {/* Auth callback route for OAuth */}
+      <Route path="/auth/callback" element={<AuthCallback />} />
       
       <Route path="/get-started" element={
         <RedirectIfAuthenticated>
