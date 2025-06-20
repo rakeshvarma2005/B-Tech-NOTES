@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/AuthContext";
-import { supabase } from "@/lib/supabase";
+import { supabase, createTrackedChannel, unsubscribeChannel } from "@/lib/supabase";
 import { motion } from "framer-motion";
 import { buttonHover, buttonTap } from "@/lib/animations";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -35,25 +35,36 @@ export default function UserProfile() {
     if (!currentUser || !isAdmin) return;
 
     const fetchPendingRequests = async () => {
-      const { data, error, count } = await supabase
-        .from("notes")
-        .select("*", { count: 'exact' })
-        .eq("status", "pending");
+      try {
+        const { data, error, count } = await supabase
+          .from("notes")
+          .select("*", { count: 'exact' })
+          .eq("status", "pending");
 
-      if (error) {
-        console.error("Error fetching pending requests:", error);
-        return;
+        if (error) {
+          console.error("Error fetching pending requests:", error);
+          return;
+        }
+
+        setPendingRequestsCount(count || 0);
+      } catch (err) {
+        console.error("Failed to fetch pending requests:", err);
       }
-
-      setPendingRequestsCount(count || 0);
     };
 
     fetchPendingRequests();
 
-    // Set up realtime subscription for notes table
-    const subscription = supabase
-      .channel('notes_changes')
-      .on('postgres_changes', 
+    // Set up realtime subscription for notes table using our tracked channel system
+    try {
+      const channel = createTrackedChannel('admin_pending_notes', {
+        config: {
+          broadcast: {
+            self: true
+          }
+        }
+      });
+      
+      channel.on('postgres_changes', 
         { 
           event: '*', 
           schema: 'public', 
@@ -63,11 +74,14 @@ export default function UserProfile() {
         () => {
           fetchPendingRequests();
         }
-      )
-      .subscribe();
+      ).subscribe();
+    } catch (err) {
+      console.error("Failed to set up subscription:", err);
+    }
 
     return () => {
-      subscription.unsubscribe();
+      // Clean up subscription
+      unsubscribeChannel('admin_pending_notes');
     };
   }, [currentUser, isAdmin]);
 

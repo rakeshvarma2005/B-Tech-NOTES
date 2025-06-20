@@ -1,7 +1,24 @@
 import { supabase } from './supabase';
+import { curriculum } from '../data/curriculum';
+
+// Log curriculum structure for debugging
+export function logCurriculumStructure() {
+  console.log("CURRICULUM STRUCTURE FOR DEBUGGING:");
+  curriculum.forEach(year => {
+    console.log(`Year: ${year.name}, ID: ${year.id}`);
+    year.semesters.forEach(semester => {
+      console.log(`  Semester: ${semester.name}, ID: ${semester.id}`);
+      semester.subjects.forEach(subject => {
+        console.log(`    Subject: ${subject.name}, ID: ${subject.id}, Code: ${subject.code}`);
+      });
+    });
+  });
+}
 
 // Note related functions
 export async function fetchNotes(userId?: string, courseId?: string, limit = 10) {
+  console.log("Fetching notes with parameters:", { userId, courseId, limit });
+  
   let query = supabase
     .from('notes')
     .select('*, profiles(username, full_name, avatar_url), courses(name, code)')
@@ -23,7 +40,60 @@ export async function fetchNotes(userId?: string, courseId?: string, limit = 10)
     throw error;
   }
   
+  console.log(`Fetched ${data?.length || 0} notes`);
+  if (data && data.length > 0) {
+    console.log("Sample note data:", {
+      id: data[0].id,
+      title: data[0].title,
+      status: data[0].status,
+      year_id: data[0].year_id,
+      semester_id: data[0].semester_id,
+      subject_id: data[0].subject_id,
+      unit_number: data[0].unit_number,
+    });
+  }
+  
   return data;
+}
+
+/**
+ * Fetch notes by subject ID, semester ID, and/or year ID
+ * This allows viewing all notes related to a specific subject
+ */
+export async function fetchNotesBySubject(subjectId: string, semesterId?: string, yearId?: string) {
+  console.log("Fetching notes by subject:", { subjectId, semesterId, yearId });
+  
+  try {
+    // Build query with proper syntax
+    let query = supabase
+      .from('notes')
+      .select('*')
+      .eq('subject_id', subjectId)
+      .eq('status', 'approved')
+      .order('created_at', { ascending: false });
+    
+    if (semesterId) {
+      query = query.eq('semester_id', semesterId);
+    }
+    
+    if (yearId) {
+      query = query.eq('year_id', yearId);
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) {
+      console.error('Error fetching notes by subject:', error);
+      throw error;
+    }
+    
+    console.log(`Fetched ${data?.length || 0} notes for subject ${subjectId}`);
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching notes by subject:', error);
+    // Return empty array instead of throwing to handle errors gracefully
+    return [];
+  }
 }
 
 export async function fetchNoteById(noteId: string) {
@@ -132,6 +202,8 @@ export async function fetchPendingNotes() {
 }
 
 export async function approveNote(noteId: string) {
+  console.log("Approving note with ID:", noteId);
+  
   const { data, error } = await supabase
     .from('notes')
     .update({ status: 'approved' })
@@ -142,6 +214,12 @@ export async function approveNote(noteId: string) {
     console.error('Error approving note:', error);
     throw error;
   }
+  
+  console.log("Note approved successfully:", {
+    id: data?.[0]?.id,
+    title: data?.[0]?.title,
+    status: data?.[0]?.status
+  });
   
   return data[0];
 }
@@ -176,6 +254,9 @@ export async function initializeDatabase() {
     }
     
     console.log('Active session found. Proceeding with database initialization.');
+    
+    // Log curriculum structure for debugging
+    logCurriculumStructure();
     
     // First, ensure storage buckets exist
     try {
@@ -218,42 +299,70 @@ async function ensureStorageBucketsExist() {
       console.error('Error listing buckets:', error);
       // Try to access the buckets directly instead of creating them
       console.log('Trying to verify bucket access without creation...');
+      
+      // Just check if we can access the standard buckets
+      try {
+        await supabase.storage.from('notes').list();
+        console.log('Notes bucket is accessible');
+      } catch (notesError) {
+        console.warn('Cannot access notes bucket:', notesError);
+      }
+      
+      try {
+        await supabase.storage.from('profiles').list();
+        console.log('Profiles bucket is accessible');
+      } catch (profilesError) {
+        console.warn('Cannot access profiles bucket:', profilesError);
+      }
+      
       return;
     }
     
     // Log existing buckets
-    console.log('Found existing buckets:', buckets.map(b => b.name).join(', '));
+    if (buckets && buckets.length > 0) {
+      console.log('Found existing buckets:', buckets.map(b => b.name).join(', '));
+    } else {
+      console.log('No existing buckets found');
+    }
     
     const bucketsToCheck = ['notes', 'profiles'];
     
     for (const bucketName of bucketsToCheck) {
-      const bucketExists = buckets.some(bucket => bucket.name === bucketName);
+      const bucketExists = buckets && buckets.some(bucket => bucket.name === bucketName);
     
       if (bucketExists) {
         console.log(`Bucket '${bucketName}' already exists`);
       } else {
+        // First check if we can access the bucket even if it doesn't appear in the list
         try {
-          console.log(`Creating '${bucketName}' bucket...`);
-          const { error: createError } = await supabase.storage.createBucket(bucketName, {
-            public: true,
-            fileSizeLimit: 10485760 // 10MB
-          });
-          
-          if (createError) {
-            console.warn(`Failed to create '${bucketName}' bucket:`, createError);
+          const { data: filesCheck } = await supabase.storage.from(bucketName).list();
+          console.log(`Bucket '${bucketName}' seems accessible despite not being listed`);
+          continue; // Skip creation if we can access it
+        } catch (accessError) {
+          // If we can't access it, try to create it
+          try {
+            console.log(`Creating '${bucketName}' bucket...`);
+            const { error: createError } = await supabase.storage.createBucket(bucketName, {
+              public: true,
+              fileSizeLimit: 10485760 // 10MB
+            });
             
-            // Check if we can still access the bucket (might already exist but not be visible)
-            try {
-              const { data: filesCheck } = await supabase.storage.from(bucketName).list();
-              console.log(`Bucket '${bucketName}' seems accessible despite creation error`);
-            } catch (accessError) {
-              console.error(`Cannot access '${bucketName}' bucket:`, accessError);
+            if (createError) {
+              console.warn(`Failed to create '${bucketName}' bucket:`, createError);
+              
+              // Even if creation failed due to permissions, check if we can still access it
+              try {
+                const { data: filesCheck } = await supabase.storage.from(bucketName).list();
+                console.log(`Bucket '${bucketName}' seems accessible despite creation error`);
+              } catch (secondAccessError) {
+                console.error(`Cannot access '${bucketName}' bucket:`, secondAccessError);
+              }
+            } else {
+              console.log(`Created '${bucketName}' bucket successfully`);
             }
-          } else {
-            console.log(`Created '${bucketName}' bucket successfully`);
+          } catch (bucketError) {
+            console.warn(`Error handling '${bucketName}' bucket:`, bucketError);
           }
-        } catch (bucketError) {
-          console.warn(`Error handling '${bucketName}' bucket:`, bucketError);
         }
       }
     }

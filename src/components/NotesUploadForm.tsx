@@ -72,10 +72,10 @@ export function NotesUploadForm({ onClose }: NotesUploadFormProps) {
         return;
       }
       
-      // Check file size (max 10MB)
-      const maxSize = 10 * 1024 * 1024; // 10MB in bytes
+      // Check file size (max 30MB)
+      const maxSize = 30 * 1024 * 1024; // 30MB in bytes
       if (selectedFile.size > maxSize) {
-        toast.error("File size should not exceed 10MB");
+        toast.error("File size should not exceed 30MB");
         return;
       }
       
@@ -284,6 +284,20 @@ export function NotesUploadForm({ onClose }: NotesUploadFormProps) {
       try {
         toast.info("Creating note record...");
         
+        // Log the important IDs for debugging
+        console.log("Using these IDs for note record:", {
+          year_id: selectedYearId,
+          semester_id: selectedSemesterId,
+          subject_id: selectedSubjectId
+        });
+        
+        // Log curriculum data for debugging
+        console.log("Selected curriculum data:", {
+          year: selectedYear ? {name: selectedYear.name, id: selectedYear.id} : null,
+          semester: selectedSemester ? {name: selectedSemester.name, id: selectedSemester.id} : null,
+          subject: selectedSubject ? {name: selectedSubject.name, id: selectedSubject.id} : null
+        });
+        
         const noteData = {
           user_id: currentUser.id,
           course_id: courseId,
@@ -426,6 +440,7 @@ export function NotesUploadForm({ onClose }: NotesUploadFormProps) {
             <SelectContent className="bg-[#1a1a2a] text-white border-[#2a2a3a]">
               <SelectItem value="regular">Regular Notes</SelectItem>
               <SelectItem value="important_questions">Important Questions</SelectItem>
+              <SelectItem value="previous_year_question_papers">Previous Year Question Papers</SelectItem>
               {isLabSubject && (
                 <>
                   <SelectItem value="lab_manual">Lab Manual</SelectItem>
@@ -499,7 +514,7 @@ export function NotesUploadForm({ onClose }: NotesUploadFormProps) {
                 )}
                 
                 <div className="mt-1 text-xs text-gray-400">
-            Max file size: 10MB. Allowed formats: PDF, TXT
+            Max file size: 30MB. Allowed formats: PDF, TXT
                 </div>
               </div>
             </div>

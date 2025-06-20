@@ -11,7 +11,9 @@ import {
   ChevronRight,
   RotateCw,
   Loader2,
-  FileQuestion
+  FileQuestion,
+  AlertTriangle,
+  Expand
 } from "lucide-react";
 import {
   Tooltip,
@@ -21,38 +23,56 @@ import {
 } from "@/components/ui/tooltip";
 import { toast } from "@/components/ui/use-toast";
 
-interface Subject {
-  code: string;
-  name: string;
-  isImportantQuestions?: boolean;
-}
-
 interface PDFViewerProps {
-  subject: Subject;
-  year: number;
-  onBack: () => void;
-  unit?: number;
+  fileUrl: string;
+  title: string;
+  subtitle?: string;
+  onBack?: () => void;
+  isImportantDocument?: boolean;
+  unitNumber?: string;
+  documentType?: string;
 }
 
-const PDFViewer = ({ subject, year, onBack, unit }: PDFViewerProps) => {
+const PDFViewer = ({ 
+  fileUrl,
+  title,
+  subtitle,
+  onBack,
+  isImportantDocument = false,
+  unitNumber,
+  documentType
+}: PDFViewerProps) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(100);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [rotation, setRotation] = useState(0); // 0, 90, 180, 270 degrees
+  const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const pdfUrl = `/pdfs/${year}/${subject.code}.pdf`;
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Simulate PDF loading
+  // Load PDF document
   useEffect(() => {
+    if (!fileUrl) {
+      setError("No file URL provided");
+      setLoading(false);
+      return;
+    }
+
+    // Set loading while PDF is being prepared
+    setLoading(true);
+    setError(null);
+    
+    // For better UX, we'll add a minimum loading time
     const timer = setTimeout(() => {
       setLoading(false);
-      setTotalPages(Math.floor(Math.random() * 20) + 5); // Random number of pages between 5-25
-    }, 1500);
+      // We don't know total pages without PDF.js, but we can set a placeholder
+      setTotalPages(1);
+    }, 1000);
     
     return () => clearTimeout(timer);
-  }, [subject, year]);
+  }, [fileUrl]);
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -65,6 +85,24 @@ const PDFViewer = ({ subject, year, onBack, unit }: PDFViewerProps) => {
       });
     } else {
       document.exitFullscreen();
+    }
+  };
+
+  // Handle iframe fullscreen
+  const toggleIframeFullscreen = () => {
+    if (iframeRef.current) {
+      // Using the Fullscreen API for the iframe content
+      if (!document.fullscreenElement) {
+        iframeRef.current.requestFullscreen().catch(err => {
+          toast({
+            title: "Fullscreen Error",
+            description: `Error attempting to enable fullscreen: ${err.message}`,
+            variant: "destructive"
+          });
+        });
+      } else {
+        document.exitFullscreen();
+      }
     }
   };
 
@@ -97,62 +135,77 @@ const PDFViewer = ({ subject, year, onBack, unit }: PDFViewerProps) => {
     setRotation(prev => (prev + 90) % 360);
   };
 
+  // Transform the fileUrl to prevent downloads
+  const getSecureFileUrl = () => {
+    // If using Google Docs viewer to prevent downloads
+    return `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true`;
+  };
+
   return (
     <motion.div 
-      className={`min-h-screen ${subject.isImportantQuestions ? 'bg-amber-50/30 dark:bg-amber-950/10' : 'bg-background'}`}
+      className={`min-h-screen ${isImportantDocument ? 'bg-amber-50/30 dark:bg-amber-950/10' : 'bg-background'}`}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.3 }}
     >
       <div className="container mx-auto px-4 py-8">
-        <motion.div 
-          initial={{ x: -20, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          transition={{ delay: 0.1 }}
-        >
-          <Button 
-            variant="ghost" 
-            onClick={onBack}
-            className="mb-4 flex items-center gap-1"
+        {onBack && (
+          <motion.div 
+            initial={{ x: -20, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            transition={{ delay: 0.1 }}
           >
-            <ChevronLeft className="h-4 w-4" />
-            Back to Subjects
-          </Button>
-        </motion.div>
+            <Button 
+              variant="ghost" 
+              onClick={onBack}
+              className="mb-4 flex items-center gap-1"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Back
+            </Button>
+          </motion.div>
+        )}
 
         <motion.h1 
-          className={`text-3xl font-bold mb-2 ${subject.isImportantQuestions ? 'text-amber-700 flex items-center gap-2' : ''}`}
+          className={`text-3xl font-bold mb-2 ${isImportantDocument ? 'text-amber-700 flex items-center gap-2' : ''}`}
           initial={{ y: -20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.2 }}
         >
-          {subject.isImportantQuestions && <FileQuestion className="h-6 w-6 text-amber-600" />}
-          {subject.name}
-          {unit && (
+          {isImportantDocument && <FileQuestion className="h-6 w-6 text-amber-600" />}
+          {title}
+          {unitNumber && (
             <span className="ml-3 text-base bg-primary/10 text-primary px-2 py-1 rounded-full">
-              Unit {unit}
+              {unitNumber}
             </span>
           )}
-          {subject.isImportantQuestions && (
+          {isImportantDocument && (
             <span className="ml-3 text-sm bg-amber-100 text-amber-800 px-2 py-1 rounded-full">
               IMP QUES
             </span>
           )}
+          {documentType && (
+            <span className="ml-3 text-sm bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+              {documentType}
+            </span>
+          )}
         </motion.h1>
         
-        <motion.div 
-          className="text-muted-foreground mb-6"
-          initial={{ y: -20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.3 }}
-        >
-          {year} • {subject.code}
-        </motion.div>
+        {subtitle && (
+          <motion.div 
+            className="text-muted-foreground mb-6"
+            initial={{ y: -20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ delay: 0.3 }}
+          >
+            {subtitle}
+          </motion.div>
+        )}
 
         <motion.div 
           className={`rounded-lg shadow-lg overflow-hidden mb-6 ${
-            subject.isImportantQuestions ? 'bg-amber-50 border-2 border-amber-200' : 'bg-card'
+            isImportantDocument ? 'bg-amber-50 border-2 border-amber-200' : 'bg-card'
           }`}
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
@@ -161,7 +214,7 @@ const PDFViewer = ({ subject, year, onBack, unit }: PDFViewerProps) => {
         >
           {/* PDF Toolbar */}
           <div className={`p-2 flex items-center justify-between ${
-            subject.isImportantQuestions ? 'bg-amber-100/50' : 'bg-muted'
+            isImportantDocument ? 'bg-amber-100/50' : 'bg-muted'
           } ${isFullscreen ? 'sticky top-0 z-10' : ''}`}>
             
             <div className="flex items-center gap-2">
@@ -209,17 +262,18 @@ const PDFViewer = ({ subject, year, onBack, unit }: PDFViewerProps) => {
                     <Button 
                       variant="ghost" 
                       size="icon"
+                      className="border-2 border-blue-600 rounded-lg hover:bg-blue-100"
                       onClick={handleZoomOut}
                       disabled={zoomLevel <= 50 || loading}
                     >
-                      <ZoomOut className="h-4 w-4" />
+                      <ZoomOut className="h-5 w-5 text-black" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>Zoom Out</TooltipContent>
                 </Tooltip>
               </TooltipProvider>
               
-              <span className="text-sm w-16 text-center">
+              <span className="text-sm w-16 text-center text-black font-bold">
                 {loading ? "..." : `${zoomLevel}%`}
               </span>
               
@@ -229,10 +283,11 @@ const PDFViewer = ({ subject, year, onBack, unit }: PDFViewerProps) => {
                     <Button 
                       variant="ghost" 
                       size="icon"
+                      className="border-2 border-blue-600 rounded-lg hover:bg-blue-100"
                       onClick={handleZoomIn}
                       disabled={zoomLevel >= 200 || loading}
                     >
-                      <ZoomIn className="h-4 w-4" />
+                      <ZoomIn className="h-5 w-5 text-black" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>Zoom In</TooltipContent>
@@ -245,10 +300,11 @@ const PDFViewer = ({ subject, year, onBack, unit }: PDFViewerProps) => {
                     <Button 
                       variant="ghost" 
                       size="icon"
+                      className="border-2 border-blue-600 rounded-lg hover:bg-blue-100"
                       onClick={handleRotate}
                       disabled={loading}
                     >
-                      <RotateCw className="h-4 w-4" />
+                      <RotateCw className="h-5 w-5 text-black" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>Rotate Page</TooltipContent>
@@ -261,12 +317,30 @@ const PDFViewer = ({ subject, year, onBack, unit }: PDFViewerProps) => {
                     <Button 
                       variant="ghost" 
                       size="icon"
+                      className="border-2 border-blue-600 rounded-lg hover:bg-blue-100"
+                      onClick={toggleIframeFullscreen}
+                      disabled={loading}
+                    >
+                      <Expand className="h-5 w-5 text-black" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Fullscreen PDF</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button 
+                      variant="ghost" 
+                      size="icon"
+                      className="border-2 border-blue-600 rounded-lg hover:bg-blue-100"
                       onClick={toggleFullscreen}
                       disabled={loading}
                     >
                       {isFullscreen ? 
-                        <Minimize2 className="h-4 w-4" /> : 
-                        <Maximize2 className="h-4 w-4" />
+                        <Minimize2 className="h-5 w-5 text-black" /> : 
+                        <Maximize2 className="h-5 w-5 text-black" />
                       }
                     </Button>
                   </TooltipTrigger>
@@ -280,7 +354,7 @@ const PDFViewer = ({ subject, year, onBack, unit }: PDFViewerProps) => {
           
           {/* PDF Content */}
           <div 
-            className="bg-white p-4 min-h-[600px] flex items-center justify-center"
+            className="bg-white min-h-[600px] flex items-center justify-center"
             style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'center top' }}
           >
             {loading ? (
@@ -292,92 +366,30 @@ const PDFViewer = ({ subject, year, onBack, unit }: PDFViewerProps) => {
                 <Loader2 className="h-10 w-10 text-primary animate-spin" />
                 <p className="text-muted-foreground">Loading PDF...</p>
               </motion.div>
-            ) : (
+            ) : error ? (
               <motion.div 
-                className="w-full max-w-3xl bg-white shadow-lg"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
+                className="flex flex-col items-center gap-4 p-8 text-center"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+              >
+                <AlertTriangle className="h-10 w-10 text-destructive" />
+                <p className="text-destructive font-medium">Error loading PDF</p>
+                <p className="text-muted-foreground">{error}</p>
+              </motion.div>
+            ) : (
+              <iframe 
+                ref={iframeRef}
+                src={getSecureFileUrl()}
+                className="w-full h-[600px] border-0"
+                title={title}
                 style={{ 
                   transform: `rotate(${rotation}deg)`,
-                  transition: 'transform 0.3s ease',
-                  maxHeight: rotation === 90 || rotation === 270 ? '100vh' : 'auto'
+                  transition: 'transform 0.3s ease'
                 }}
-              >
-                <div className={`bg-gray-100 border relative ${rotation === 90 || rotation === 270 ? 'aspect-[4/3]' : 'aspect-[3/4]'}`}>
-                  {/* Simulated PDF page */}
-                  <div className="absolute inset-0 p-8">
-                    <div className="h-6 w-3/4 bg-gray-300 rounded mb-4"></div>
-                    <div className="h-4 w-full bg-gray-300 rounded mb-3"></div>
-                    <div className="h-4 w-full bg-gray-300 rounded mb-3"></div>
-                    <div className="h-4 w-2/3 bg-gray-300 rounded mb-6"></div>
-                    
-                    <div className="h-5 w-1/2 bg-gray-400 rounded mb-4"></div>
-                    <div className="h-4 w-full bg-gray-300 rounded mb-3"></div>
-                    <div className="h-4 w-full bg-gray-300 rounded mb-3"></div>
-                    <div className="h-4 w-5/6 bg-gray-300 rounded mb-3"></div>
-                    <div className="h-4 w-full bg-gray-300 rounded mb-6"></div>
-                    
-                    <div className="h-20 w-full bg-gray-200 rounded mb-4 flex items-center justify-center">
-                      <div className="h-10 w-10 rounded-full bg-gray-400"></div>
-                    </div>
-                    
-                    <div className="h-4 w-full bg-gray-300 rounded mb-3"></div>
-                    <div className="h-4 w-full bg-gray-300 rounded mb-3"></div>
-                    <div className="h-4 w-4/5 bg-gray-300 rounded"></div>
-                  </div>
-                  
-                  <div className="absolute bottom-4 right-4 text-sm text-gray-400">
-                    {currentPage}
-                  </div>
-                </div>
-              </motion.div>
+                allowFullScreen
+              />
             )}
           </div>
-        </motion.div>
-
-        <motion.div 
-          className="flex justify-between items-center"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
-        >
-          <Button 
-            variant="outline"
-            onClick={handlePrevPage}
-            disabled={currentPage === 1 || loading}
-            className="flex items-center gap-1"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            Previous
-          </Button>
-          
-          <div className="flex items-center gap-2">
-            <div className="text-sm text-muted-foreground">
-              {loading ? "Loading..." : `Page ${currentPage} of ${totalPages}`}
-            </div>
-            {!loading && (
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={handleRotate}
-                className="flex items-center gap-1"
-              >
-                <RotateCw className="h-4 w-4" />
-                Rotate
-              </Button>
-            )}
-          </div>
-          
-          <Button 
-            variant="outline"
-            onClick={handleNextPage}
-            disabled={currentPage === totalPages || loading}
-            className="flex items-center gap-1"
-          >
-            Next
-            <ChevronRight className="h-4 w-4" />
-          </Button>
         </motion.div>
       </div>
     </motion.div>

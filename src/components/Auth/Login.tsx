@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,8 +13,16 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const { login, signInWithGoogle } = useAuth();
+  const [loginSuccess, setLoginSuccess] = useState(false);
+  const { login, signInWithGoogle, currentUser } = useAuth();
   const navigate = useNavigate();
+  const adminEmails = ["admin@example.com", "rakeshvarma9704@gmail.com"];
+
+  useEffect(() => {
+    if (currentUser) {
+      setLoginSuccess(true);
+    }
+  }, [currentUser]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -22,7 +30,7 @@ export default function Login() {
     try {
       setLoading(true);
       await login(email, password);
-      navigate("/welcome");
+      setLoginSuccess(true);
       toast({
         title: "Login successful",
         description: "Welcome back!",
@@ -146,6 +154,14 @@ export default function Login() {
                 Don't have an account? Sign up
               </Button>
             </motion.div>
+            {loginSuccess && (
+              <div className="w-full flex flex-col gap-2 mt-4">
+                <Button className="w-full" onClick={() => navigate("/dashboard")}>Go to Dashboard</Button>
+                {currentUser && adminEmails.includes(currentUser.email) && (
+                  <Button className="w-full" variant="outline" onClick={() => navigate("/admin")}>Admin Panel</Button>
+                )}
+              </div>
+            )}
           </CardFooter>
         </Card>
       </motion.div>

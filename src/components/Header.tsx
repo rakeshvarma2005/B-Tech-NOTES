@@ -4,10 +4,12 @@ import { Moon, Sun, GraduationCap } from "lucide-react";
 import { useTheme } from "./ThemeProvider";
 import { useAuth } from "@/lib/AuthContext";
 import UserProfile from "@/components/UserProfile";
+import { useNavigate } from "react-router-dom";
 
 const Header = () => {
   const { theme, setTheme } = useTheme();
   const { currentUser } = useAuth();
+  const navigate = useNavigate();
 
   return (
     <header className="bg-card border-b border-border p-4 sticky top-0 z-40">
@@ -22,6 +24,13 @@ const Header = () => {
         </div>
         
         <div className="flex items-center space-x-4">
+          <Button
+            variant="outline"
+            onClick={() => navigate("/dashboard")}
+            className="font-semibold"
+          >
+            Dashboard
+          </Button>
           <Button
             variant="ghost"
             size="icon"

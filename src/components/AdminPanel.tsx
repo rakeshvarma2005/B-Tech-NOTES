@@ -25,7 +25,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { FileText, Check, X, Eye, Clock, RefreshCw } from "lucide-react";
+import { FileText, Check, X, Eye, Clock, RefreshCw, Users, FileUp, Upload } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import { curriculum } from "@/data/curriculum";
@@ -43,20 +43,33 @@ interface Note {
   status: "pending" | "approved" | "rejected";
   created_at: string;
   updated_at: string;
-  profiles: {
-    email: string;
-    full_name: string;
+  profiles?: {
+    email?: string;
+    full_name?: string;
   };
-  courses: {
-    name: string;
-    code: string;
-    year: number;
-    semester: number;
-    departments: {
-      name: string;
-      code: string;
+  courses?: {
+    name?: string;
+    code?: string;
+    year?: number;
+    semester?: number;
+    departments?: {
+      name?: string;
+      code?: string;
     };
   };
+  year_id?: string;
+  semester_id?: string;
+  subject_id?: string;
+  unit_number?: number;
+  is_important_questions?: boolean;
+  notes_type?: string;
+}
+
+interface DashboardStats {
+  totalUsers: number;
+  totalNotes: number;
+  totalViews: number;
+  pendingApprovals: number;
 }
 
 export default function AdminPanel() {
@@ -67,6 +80,13 @@ export default function AdminPanel() {
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0); // Used to trigger a refresh
+  const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<DashboardStats>({
+    totalUsers: 0,
+    totalNotes: 0,
+    totalViews: 0,
+    pendingApprovals: 0
+  });
 
   const isAdmin = currentUser?.email === "admin@example.com" || 
                   currentUser?.email === "rakeshvarma9704@gmail.com";
@@ -74,44 +94,148 @@ export default function AdminPanel() {
   useEffect(() => {
     if (!currentUser || !isAdmin) return;
 
+    const fetchStats = async () => {
+      try {
+        // Get total users
+        const { count: userCount } = await supabase
+          .from('profiles')
+          .select('*', { count: 'exact', head: true });
+        
+        // Get total notes (both pending and approved)
+        const { count: noteCount } = await supabase
+          .from('notes')
+          .select('*', { count: 'exact', head: true });
+        
+        // Get pending approvals count
+        const { count: pendingCount } = await supabase
+          .from('notes')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'pending');
+        
+        // For views, we'll use a placeholder for now
+        // In a real app, you would have a view_count column or a separate table tracking views
+        
+        setStats({
+          totalUsers: userCount || 0,
+          totalNotes: noteCount || 0,
+          // This is a placeholder - in a real app, get this from your database
+          totalViews: 969,
+          pendingApprovals: pendingCount || 0
+        });
+      } catch (error) {
+        console.error("Error fetching dashboard stats:", error);
+      }
+    };
+
+    fetchStats();
+  }, [currentUser, isAdmin, refreshKey]);
+  
+  useEffect(() => {
+    if (!currentUser || !isAdmin) return;
+
     const fetchNotes = async () => {
       setIsLoading(true);
+      setError(null);
+      
       try {
-        // Fetch pending notes
+        // Fetch only basic notes data without any joins
         const { data: pendingData, error: pendingError } = await supabase
           .from("notes")
-          .select(`
-            *,
-            profiles (email, full_name),
-            courses (
-              name, code, year, semester,
-              departments (name, code)
-            )
-          `)
+          .select("*")
           .eq("status", "pending")
           .order("created_at", { ascending: false });
 
-        if (pendingError) throw pendingError;
-        setPendingNotes(pendingData as Note[]);
+        if (pendingError) {
+          console.error("Error fetching notes:", pendingError);
+          throw pendingError;
+        }
 
-        // Fetch approved notes
+        // Fetch approved notes with the same approach
         const { data: approvedData, error: approvedError } = await supabase
           .from("notes")
-          .select(`
-            *,
-            profiles (email, full_name),
-            courses (
-              name, code, year, semester,
-              departments (name, code)
-            )
-          `)
+          .select("*")
           .eq("status", "approved")
           .order("created_at", { ascending: false });
 
-        if (approvedError) throw approvedError;
-        setApprovedNotes(approvedData as Note[]);
+        if (approvedError) {
+          console.error("Error fetching approved notes:", approvedError);
+          throw approvedError;
+        }
+        
+        // Fetch user profiles separately for the notes we have
+        const userIds = [...(pendingData || []), ...(approvedData || [])]
+          .map(note => note.user_id)
+          .filter((id, index, self) => id && self.indexOf(id) === index);
+        
+        let profilesData = {};
+        if (userIds.length > 0) {
+          try {
+            const { data: profiles, error: profilesError } = await supabase
+              .from("profiles")
+              .select("id, email, full_name")
+              .in("id", userIds);
+            
+            if (!profilesError && profiles) {
+              profilesData = profiles.reduce((acc, profile) => {
+                acc[profile.id] = profile;
+                return acc;
+              }, {});
+            }
+          } catch (profileErr) {
+            console.warn("Could not fetch profiles:", profileErr);
+          }
+        }
+        
+        // Fetch course data separately for the notes we have
+        const courseIds = [...(pendingData || []), ...(approvedData || [])]
+          .map(note => note.course_id)
+          .filter((id, index, self) => id && self.indexOf(id) === index);
+        
+        let coursesData = {};
+        if (courseIds.length > 0) {
+          try {
+            const { data: courses, error: coursesError } = await supabase
+              .from("courses")
+              .select("id, name, code, year, semester")
+              .in("id", courseIds);
+            
+            if (!coursesError && courses) {
+              coursesData = courses.reduce((acc, course) => {
+                acc[course.id] = course;
+                return acc;
+              }, {});
+            }
+          } catch (courseErr) {
+            console.warn("Could not fetch courses:", courseErr);
+          }
+        }
+        
+        // Combine the data
+        const enrichedPendingData = (pendingData || []).map(note => ({
+          ...note,
+          profiles: profilesData[note.user_id] || {},
+          courses: coursesData[note.course_id] || {}
+        }));
+        
+        const enrichedApprovedData = (approvedData || []).map(note => ({
+          ...note,
+          profiles: profilesData[note.user_id] || {},
+          courses: coursesData[note.course_id] || {}
+        }));
+        
+        setPendingNotes(enrichedPendingData);
+        setApprovedNotes(enrichedApprovedData);
+        
+        // Update pending approvals count in stats
+        setStats(prev => ({
+          ...prev,
+          pendingApprovals: enrichedPendingData.length,
+          totalNotes: enrichedPendingData.length + enrichedApprovedData.length
+        }));
+        
       } catch (error) {
         console.error("Error fetching notes:", error);
+        setError("Failed to fetch notes. Please check your database configuration.");
         toast.error("Failed to fetch notes");
       } finally {
         setIsLoading(false);
@@ -132,6 +256,14 @@ export default function AdminPanel() {
     }
 
     try {
+      toast.info("Approving note...");
+      
+      // Check if file URL is valid
+      if (!note.file_url) {
+        toast.error("Note has no associated file");
+        return;
+      }
+
       // Update note status to approved
       const { error } = await supabase
         .from("notes")
@@ -147,7 +279,7 @@ export default function AdminPanel() {
       setPendingNotes(pendingNotes.filter(n => n.id !== note.id));
       toast.success("Note approved successfully");
 
-      // Refresh the data
+      // Refresh the data to update the approved notes list
       handleRefresh();
     } catch (error) {
       console.error("Error approving note:", error);
@@ -186,8 +318,8 @@ export default function AdminPanel() {
 
   // Get subject label from curriculum
   const getSubjectLabel = (note: Note) => {
-    if (note.courses) {
-      return `${note.courses.name} (${note.courses.code})`;
+    if (note.courses?.name) {
+      return `${note.courses.name}${note.courses.code ? ` (${note.courses.code})` : ''}`;
     }
     return "Unknown Subject";
   };
@@ -210,6 +342,64 @@ export default function AdminPanel() {
           Refresh
         </Button>
       </div>
+
+      {/* Dashboard Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <Card className="bg-gray-900 text-white">
+          <CardContent className="p-6 flex justify-between items-center">
+            <div>
+              <p className="text-gray-400 mb-1">Total Users</p>
+              <h3 className="text-4xl font-bold">{stats.totalUsers}</h3>
+            </div>
+            <div className="bg-indigo-900 p-3 rounded-full">
+              <Users className="h-6 w-6 text-indigo-400" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gray-900 text-white">
+          <CardContent className="p-6 flex justify-between items-center">
+            <div>
+              <p className="text-gray-400 mb-1">Total Notes</p>
+              <h3 className="text-4xl font-bold">{stats.totalNotes}</h3>
+            </div>
+            <div className="bg-indigo-900 p-3 rounded-full">
+              <FileText className="h-6 w-6 text-indigo-400" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gray-900 text-white">
+          <CardContent className="p-6 flex justify-between items-center">
+            <div>
+              <p className="text-gray-400 mb-1">Total Views</p>
+              <h3 className="text-4xl font-bold">{stats.totalViews}</h3>
+            </div>
+            <div className="bg-indigo-900 p-3 rounded-full">
+              <Eye className="h-6 w-6 text-indigo-400" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gray-900 text-white">
+          <CardContent className="p-6 flex justify-between items-center">
+            <div>
+              <p className="text-gray-400 mb-1">Pending Approvals</p>
+              <h3 className="text-4xl font-bold">{stats.pendingApprovals}</h3>
+            </div>
+            <div className="bg-indigo-900 p-3 rounded-full">
+              <Upload className="h-6 w-6 text-indigo-400" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {error && (
+        <div className="bg-destructive/15 border border-destructive text-destructive px-4 py-3 rounded-md mb-6">
+          <p className="font-medium">Error: {error}</p>
+          <p className="text-sm mt-1">Please check your database configuration and try again.</p>
+        </div>
+      )}
 
       <Tabs defaultValue="requests" className="w-full">
         <TabsList className="grid w-full grid-cols-2">
@@ -244,7 +434,7 @@ export default function AdminPanel() {
                   <CardHeader>
                     <div className="flex justify-between items-start">
                       <div>
-                        <CardTitle className="line-clamp-1">{note.title}</CardTitle>
+                        <CardTitle className="line-clamp-1">{note.title || "Untitled Note"}</CardTitle>
                         <CardDescription className="mt-1">
                           {getSubjectLabel(note)}
                         </CardDescription>
@@ -264,7 +454,7 @@ export default function AdminPanel() {
                     <div className="flex flex-col gap-1 text-xs text-muted-foreground">
                       <span>
                         Uploaded by{" "}
-                        <span className="font-medium">{note.profiles?.email}</span>
+                        <span className="font-medium">{note.profiles?.email || "Unknown"}</span>
                       </span>
                       <span>
                         Uploaded on{" "}
@@ -282,17 +472,23 @@ export default function AdminPanel() {
                       </DialogTrigger>
                       <DialogContent className="max-w-4xl">
                         <DialogHeader>
-                          <DialogTitle>{note.title}</DialogTitle>
+                          <DialogTitle>{note.title || "Untitled Note"}</DialogTitle>
                           <DialogDescription>
-                            {getSubjectLabel(note)} • Uploaded by {note.profiles?.email}
+                            {getSubjectLabel(note)} • Uploaded by {note.profiles?.email || "Unknown"}
                           </DialogDescription>
                         </DialogHeader>
                         <div className="mt-4">
-                          <iframe 
-                            src={note.file_url} 
-                            className="w-full h-[70vh] border rounded-md"
-                            title={note.title}
-                          />
+                          {note.file_url ? (
+                            <iframe 
+                              src={note.file_url} 
+                              className="w-full h-[70vh] border rounded-md"
+                              title={note.title || "Note preview"}
+                            />
+                          ) : (
+                            <div className="w-full h-[70vh] border rounded-md flex items-center justify-center bg-muted">
+                              <p className="text-muted-foreground">No preview available</p>
+                            </div>
+                          )}
                         </div>
                       </DialogContent>
                     </Dialog>
@@ -343,7 +539,7 @@ export default function AdminPanel() {
                   <CardHeader>
                     <div className="flex justify-between items-start">
                       <div>
-                        <CardTitle className="line-clamp-1">{note.title}</CardTitle>
+                        <CardTitle className="line-clamp-1">{note.title || "Untitled Note"}</CardTitle>
                         <CardDescription className="mt-1">
                           {getSubjectLabel(note)}
                         </CardDescription>
@@ -363,7 +559,7 @@ export default function AdminPanel() {
                     <div className="flex flex-col gap-1 text-xs text-muted-foreground">
                       <span>
                         Uploaded by{" "}
-                        <span className="font-medium">{note.profiles?.email}</span>
+                        <span className="font-medium">{note.profiles?.email || "Unknown"}</span>
                       </span>
                       <span>
                         Approved on{" "}
@@ -381,17 +577,23 @@ export default function AdminPanel() {
                       </DialogTrigger>
                       <DialogContent className="max-w-4xl">
                         <DialogHeader>
-                          <DialogTitle>{note.title}</DialogTitle>
+                          <DialogTitle>{note.title || "Untitled Note"}</DialogTitle>
                           <DialogDescription>
-                            {getSubjectLabel(note)} • Uploaded by {note.profiles?.email}
+                            {getSubjectLabel(note)} • Uploaded by {note.profiles?.email || "Unknown"}
                           </DialogDescription>
                         </DialogHeader>
                         <div className="mt-4">
-                          <iframe 
-                            src={note.file_url} 
-                            className="w-full h-[70vh] border rounded-md"
-                            title={note.title}
-                          />
+                          {note.file_url ? (
+                            <iframe 
+                              src={note.file_url} 
+                              className="w-full h-[70vh] border rounded-md"
+                              title={note.title || "Note preview"}
+                            />
+                          ) : (
+                            <div className="w-full h-[70vh] border rounded-md flex items-center justify-center bg-muted">
+                              <p className="text-muted-foreground">No preview available</p>
+                            </div>
+                          )}
                         </div>
                       </DialogContent>
                     </Dialog>
@@ -407,15 +609,15 @@ export default function AdminPanel() {
       <AlertDialog open={isRejectDialogOpen} onOpenChange={setIsRejectDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Reject Note</AlertDialogTitle>
+            <AlertDialogTitle>Reject this note?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to reject this note? This action cannot be undone.
+              This action cannot be undone. The note will be marked as rejected and will no longer be visible to users.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction 
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive hover:bg-destructive/90"
               onClick={() => selectedNote && handleRejectNote(selectedNote)}
             >
               Reject

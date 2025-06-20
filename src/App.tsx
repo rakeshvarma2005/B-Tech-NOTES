@@ -9,6 +9,8 @@ import { useEffect, useState } from "react";
 import { initializeDatabase } from "@/lib/dbFunctions";
 import { testSupabaseConnection } from "@/lib/supabase";
 import { toast } from "sonner";
+import { AnimatePresence } from 'framer-motion';
+import { ThemeProvider } from "@/components/ThemeProvider";
 
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
@@ -23,6 +25,11 @@ import RecentActivity from "./pages/RecentActivity";
 import UploadNotes from "./pages/UploadNotes";
 import NotesExample from "./pages/NotesExample";
 import AuthCallback from "./pages/auth/callback";
+import Header from "./components/Header";
+import ImageUploadExample from "./pages/ImageUploadExample";
+
+// Import curriculum for debugging
+import { curriculum } from "./data/curriculum";
 
 const queryClient = new QueryClient();
 
@@ -38,7 +45,7 @@ const RedirectIfAuthenticated = ({ children }: { children: React.ReactNode }) =>
 };
 
 const AppRoutes = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, loading } = useAuth();
   const [isInitializing, setIsInitializing] = useState(true);
   
   useEffect(() => {
@@ -76,6 +83,18 @@ const AppRoutes = () => {
     };
     
     setupDatabase();
+
+    // Log curriculum structure for debugging
+    console.log("CURRICULUM STRUCTURE FOR DEBUGGING:");
+    curriculum.forEach(year => {
+      console.log(`Year: ${year.name}, ID: ${year.id}`);
+      year.semesters.forEach(semester => {
+        console.log(`  Semester: ${semester.name}, ID: ${semester.id}`);
+        semester.subjects.forEach(subject => {
+          console.log(`    Subject: ${subject.name}, ID: ${subject.id}, Code: ${subject.code}`);
+        });
+      });
+    });
   }, [currentUser]);
   
   // Show loading indicator while initializing
@@ -90,23 +109,23 @@ const AppRoutes = () => {
     );
   }
   
+  if (loading) {
+    return <div className="flex items-center justify-center h-screen bg-background">Loading...</div>;
+  }
+  
   return (
     <Routes>
       {/* Public Routes */}
       <Route path="/" element={
         currentUser ? 
           <Navigate to="/dashboard" replace /> : 
-          <Navigate to="/login" replace />
+          <Navigate to="/get-started" replace />
       } />
       
       {/* Auth callback route for OAuth */}
       <Route path="/auth/callback" element={<AuthCallback />} />
       
-      <Route path="/get-started" element={
-        <RedirectIfAuthenticated>
-          <GetStarted />
-        </RedirectIfAuthenticated>
-      } />
+      <Route path="/get-started" element={<GetStarted />} />
       
       {/* Auth Routes - redirect if already logged in */}
       <Route path="/login" element={
@@ -161,6 +180,11 @@ const AppRoutes = () => {
           <AdminPanel />
         </ProtectedRoute>
       } />
+      <Route path="/image-upload-example" element={
+        <ProtectedRoute>
+          <ImageUploadExample />
+        </ProtectedRoute>
+      } />
       
       {/* 404 Route */}
       <Route path="*" element={<NotFound />} />
@@ -171,13 +195,22 @@ const AppRoutes = () => {
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <AppRoutes />
-        </BrowserRouter>
-      </TooltipProvider>
+      <ThemeProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <AnimatePresence mode="wait" initial={false}>
+              <div className="flex flex-col min-h-screen bg-background dark:bg-background">
+                <Header />
+                <main className="flex-1">
+                  <AppRoutes />
+                </main>
+              </div>
+            </AnimatePresence>
+          </BrowserRouter>
+        </TooltipProvider>
+      </ThemeProvider>
     </AuthProvider>
   </QueryClientProvider>
 );

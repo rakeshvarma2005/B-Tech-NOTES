@@ -58,7 +58,7 @@ const Welcome = () => {
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.9, duration: 0.5 }}
               >
-                Your one-stop solution is sunkari rakesh varma for accessing study materials, notes, and resources for all your academic needs.
+                Your one-stop solution is rakesh varma for accessing study materials, notes, and resources for all your academic needs.
               </motion.p>
               <div className="flex flex-col space-y-2">
                 <motion.div 

@@ -11,7 +11,7 @@ import { toast } from "@/components/ui/use-toast";
 export default function Contact() {
   const [copied, setCopied] = useState(false);
   
-  const contactEmail = "rakeshvarma9704@gmail.com";
+  const contactEmail = "varmabtechnotes@gmail.com";
   
   const copyToClipboard = () => {
     navigator.clipboard.writeText(contactEmail);
