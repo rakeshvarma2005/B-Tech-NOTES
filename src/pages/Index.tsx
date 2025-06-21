@@ -22,6 +22,7 @@ interface Note {
   subject_id: string;
   created_at: string;
   user_id: string;
+  notes_type?: string;
 }
 
 const Index = () => {
@@ -59,30 +60,45 @@ const Index = () => {
       
       console.log(`Fetched ${notes.length} notes for subject ${subjectId}`);
       
-      // Filter notes by unit if a specific unit was selected
-      const unitNotes = unitNumber === 0 
-        ? notes.filter(note => note.is_important_questions) // Unit 0 is for important questions
-        : notes.filter(note => {
-            // Match the unit_number field correctly
-            // It could be stored as "Unit 1", "1", or a number
-            if (!note.unit_number) return false;
-            
-            // Try to extract unit number from the string
-            const unitMatch = note.unit_number.toString().match(/(\d+)/);
-            if (unitMatch) {
-              return parseInt(unitMatch[1], 10) === unitNumber;
-            }
-            
-            return note.unit_number === unitNumber.toString();
-          });
+      // Filter notes based on the unit number
+      let unitNotes: Note[] = [];
       
-      console.log(`Filtered to ${unitNotes.length} notes for unit ${unitNumber}`);
+      if (unitNumber === 0) {
+        // Unit 0 is for important questions
+        unitNotes = notes.filter(note => note.is_important_questions);
+      } else if (unitNumber === -1) {
+        // Unit -1 is for previous year question papers
+        unitNotes = notes.filter(note => note.notes_type === 'previous_papers');
+      } else {
+        // Regular units (1-5)
+        unitNotes = notes.filter(note => {
+          // Match the unit_number field correctly
+          // It could be stored as "Unit 1", "1", or a number
+          if (!note.unit_number) return false;
+          
+          // Try to extract unit number from the string
+          const unitMatch = note.unit_number.toString().match(/(\d+)/);
+          if (unitMatch) {
+            return parseInt(unitMatch[1], 10) === unitNumber;
+          }
+          
+          return note.unit_number === unitNumber.toString();
+        });
+      }
+      
+      console.log(`Filtered to ${unitNotes.length} notes for ${
+        unitNumber === 0 ? 'important questions' : 
+        unitNumber === -1 ? 'previous year papers' : 
+        `unit ${unitNumber}`
+      }`);
+      
       if (unitNotes.length > 0) {
         console.log("Available notes:", unitNotes.map(note => ({
           id: note.id,
           title: note.title,
           unit: note.unit_number,
-          is_important: note.is_important_questions
+          is_important: note.is_important_questions,
+          type: note.notes_type
         })));
       }
       
@@ -95,7 +111,11 @@ const Index = () => {
         setShowNotesListing(false);
         toast({
           title: "No notes available",
-          description: `No notes found for ${unitNumber === 0 ? 'Important Questions' : `Unit ${unitNumber}`}`,
+          description: `No notes found for ${
+            unitNumber === 0 ? 'Important Questions' : 
+            unitNumber === -1 ? 'Previous Year Question Papers' : 
+            `Unit ${unitNumber}`
+          }`,
           variant: "destructive"
         });
       }
@@ -194,6 +214,15 @@ const Index = () => {
     return `Unit ${unitNumber}`;
   };
 
+  // Get document type for display in the PDF viewer
+  const getDocumentType = (): string | undefined => {
+    if (!selectedUnit) return undefined;
+    
+    if (selectedUnit === 0) return "Important Questions";
+    if (selectedUnit === -1) return "Previous Year Papers";
+    return undefined;
+  };
+
   return (
     <ThemeProvider>
       <motion.div 
@@ -254,7 +283,11 @@ const Index = () => {
             </h1>
             <h2 className="text-xl text-primary mb-6 flex items-center gap-2">
               <BookOpen className="h-5 w-5" />
-              {selectedSubject.code} • {selectedUnit === 0 ? 'Important Questions' : `Unit ${selectedUnit}`}
+              {selectedSubject.code} • {
+                selectedUnit === 0 ? 'Important Questions' : 
+                selectedUnit === -1 ? 'Previous Year Question Papers' : 
+                `Unit ${selectedUnit}`
+              }
             </h2>
 
             <div className="mb-4">
@@ -290,6 +323,11 @@ const Index = () => {
                               Important
                             </Badge>
                           )}
+                          {note.notes_type === 'previous_papers' && (
+                            <Badge variant="outline" className="border-green-500 text-green-500">
+                              Previous Year
+                            </Badge>
+                          )}
                           <Badge variant="secondary" className="flex items-center gap-1">
                             <Eye className="h-3 w-3" /> 
                             {Math.floor(Math.random() * 50) + 1} {/* Placeholder for actual view count */}
@@ -299,7 +337,11 @@ const Index = () => {
                     </CardHeader>
                     <CardContent>
                       <p className="text-sm text-muted-foreground">
-                        By SemNotes • {formatUnitNumber(note.unit_number)}
+                        By SemNotes • {
+                          note.notes_type === 'previous_papers' ? 'Previous Year Papers' :
+                          note.is_important_questions ? 'Important Questions' :
+                          formatUnitNumber(note.unit_number)
+                        }
                       </p>
                     </CardContent>
                     <CardFooter className="flex justify-end">
@@ -330,9 +372,10 @@ const Index = () => {
               fileUrl={getFileUrl(selectedSubject, selectedUnit)}
               title={selectedNote?.title || selectedSubject.name}
               subtitle={`Year ${getYearNumber(selectedYearId)} - ${selectedNote ? 'Uploaded Notes' : 'Sample Material'}`}
-              unitNumber={selectedUnit ? `Unit ${selectedUnit}` : undefined}
+              unitNumber={selectedUnit && selectedUnit > 0 ? `Unit ${selectedUnit}` : undefined}
               onBack={handleBackToNotesList}
               isImportantDocument={selectedUnit === 0 || (selectedNote?.is_important_questions || false)}
+              documentType={getDocumentType()}
             />
           </motion.div>
         )}

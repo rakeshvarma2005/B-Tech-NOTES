@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge";
 import { fetchNotesBySubject } from "@/lib/dbFunctions";
 import { supabase } from "@/lib/supabase";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface SubjectSelectionProps {
   yearId: string;
@@ -18,6 +19,12 @@ interface NotesCount {
   [subjectId: string]: number;
 }
 
+interface UnitNotesCount {
+  [unitNumber: number]: number;
+  importantQuestions: number;
+  previousYearPapers: number;
+}
+
 const SubjectSelection = ({ yearId, onBack, onSubjectSelect }: SubjectSelectionProps) => {
   const [selectedYear, setSelectedYear] = useState<Year | null>(null);
   const [selectedSemesterId, setSelectedSemesterId] = useState<string>("");
@@ -25,7 +32,14 @@ const SubjectSelection = ({ yearId, onBack, onSubjectSelect }: SubjectSelectionP
   const [unitCount, setUnitCount] = useState(5);
   const [unitSubject, setUnitSubject] = useState<CurriculumSubject | null>(null);
   const [notesCount, setNotesCount] = useState<NotesCount>({});
+  const [unitNotesCount, setUnitNotesCount] = useState<UnitNotesCount>({
+    1: 0, 2: 0, 3: 0, 4: 0, 5: 0,
+    importantQuestions: 0,
+    previousYearPapers: 0
+  });
   const [loading, setLoading] = useState(true);
+  const [hoveredUnit, setHoveredUnit] = useState<number | null>(null);
+  const [clickedUnit, setClickedUnit] = useState<number | null>(null);
 
   // Find the selected year from curriculum
   useEffect(() => {
@@ -99,19 +113,80 @@ const SubjectSelection = ({ yearId, onBack, onSubjectSelect }: SubjectSelectionP
     sem => sem.id === selectedSemesterId
   );
 
-  // When a subject is clicked, open the unit dialog
-  const handleSubjectClick = (subject: CurriculumSubject) => {
+  // When a subject is clicked, open the unit dialog and fetch unit-specific notes counts
+  const handleSubjectClick = async (subject: CurriculumSubject) => {
     setUnitSubject(subject);
     setUnitDialogOpen(true);
     // Default to 5 units, but you can customize per subject if needed
     setUnitCount(5);
+    setHoveredUnit(null);
+    setClickedUnit(null);
+    
+    // Initialize unit notes count
+    const initialUnitCounts: UnitNotesCount = {
+      1: 0, 2: 0, 3: 0, 4: 0, 5: 0,
+      importantQuestions: 0,
+      previousYearPapers: 0
+    };
+    
+    setUnitNotesCount(initialUnitCounts);
+    
+    try {
+      // Fetch all notes for this subject
+      const notes = await fetchNotesBySubject(subject.id);
+      
+      if (notes && notes.length > 0) {
+        // Count notes for each unit
+        const unitCounts = { ...initialUnitCounts };
+        
+        notes.forEach(note => {
+          if (note.is_important_questions) {
+            unitCounts.importantQuestions += 1;
+          } else if (note.notes_type === 'previous_papers') {
+            unitCounts.previousYearPapers += 1;
+          } else if (note.unit_number) {
+            // Extract unit number from string like "Unit 1" or just "1"
+            const unitMatch = note.unit_number.toString().match(/(\d+)/);
+            if (unitMatch) {
+              const unitNum = parseInt(unitMatch[1], 10);
+              if (unitNum >= 1 && unitNum <= 5) {
+                unitCounts[unitNum] = (unitCounts[unitNum] || 0) + 1;
+              }
+            }
+          }
+        });
+        
+        setUnitNotesCount(unitCounts);
+      }
+    } catch (error) {
+      console.error('Error fetching unit-specific notes count:', error);
+    }
   };
 
   // When a unit is selected, call onSubjectSelect with extra info
   const handleUnitSelect = (unitNumber: number) => {
     if (unitSubject) {
-      onSubjectSelect(unitSubject, unitNumber);
-      setUnitDialogOpen(false);
+      setClickedUnit(unitNumber);
+      
+      // Add a delay to show the animation before closing the dialog
+      setTimeout(() => {
+        onSubjectSelect(unitSubject, unitNumber);
+        setUnitDialogOpen(false);
+      }, 400);
+    }
+  };
+
+  // Handle previous year papers selection
+  const handlePreviousYearPapers = () => {
+    if (unitSubject) {
+      setClickedUnit(-1);
+      
+      // Add a delay to show the animation before closing the dialog
+      setTimeout(() => {
+        // Use a special unit number like -1 to indicate previous year papers
+        onSubjectSelect(unitSubject, -1);
+        setUnitDialogOpen(false);
+      }, 400);
     }
   };
 
@@ -209,10 +284,10 @@ const SubjectSelection = ({ yearId, onBack, onSubjectSelect }: SubjectSelectionP
 
         {/* Unit Selection Dialog */}
         <Dialog open={unitDialogOpen} onOpenChange={setUnitDialogOpen}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-md bg-[#0a0a14] border-blue-500/30">
             <DialogHeader>
-              <DialogTitle>Select Unit</DialogTitle>
-              <div className="mt-2 text-muted-foreground">
+              <DialogTitle className="text-white">Select Unit</DialogTitle>
+              <div className="mt-2 text-gray-400">
                 {unitSubject?.name} ({unitSubject?.code})
                 {notesCount[unitSubject?.id || ""] > 0 && (
                   <Badge variant="secondary" className="ml-2">
@@ -221,35 +296,181 @@ const SubjectSelection = ({ yearId, onBack, onSubjectSelect }: SubjectSelectionP
                 )}
               </div>
             </DialogHeader>
-            <div className="grid grid-cols-2 gap-4 mt-4">
+            <motion.div 
+              className="grid grid-cols-2 gap-4 mt-4"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3 }}
+            >
               {Array.from({ length: unitCount }, (_, idx) => idx + 1)
                 .sort((a, b) => a - b)
                 .map((unitNum) => (
-                  <Button key={unitNum} onClick={() => handleUnitSelect(unitNum)} className="w-full">
-                    Unit {unitNum}
-                  </Button>
+                  <motion.div
+                    key={unitNum}
+                    onHoverStart={() => setHoveredUnit(unitNum)}
+                    onHoverEnd={() => setHoveredUnit(null)}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    className="relative"
+                  >
+                    <AnimatePresence>
+                      {hoveredUnit === unitNum && (
+                        <motion.div
+                          className="absolute inset-0 bg-blue-500/20 rounded-md blur-sm -z-10"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                        />
+                      )}
+                    </AnimatePresence>
+                    
+                    <Button 
+                      onClick={() => handleUnitSelect(unitNum)} 
+                      className={`w-full relative overflow-hidden ${
+                        clickedUnit === unitNum ? 'bg-blue-600 text-white' : 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20'
+                      }`}
+                    >
+                      {clickedUnit === unitNum && (
+                        <motion.div
+                          className="absolute inset-0 bg-blue-400/30"
+                          initial={{ scale: 0, borderRadius: '100%' }}
+                          animate={{ scale: 2, borderRadius: '0%' }}
+                          transition={{ duration: 0.4 }}
+                        />
+                      )}
+                      
+                      {hoveredUnit === unitNum && (
+                        <motion.div 
+                          className="absolute inset-0 bg-gradient-to-r from-blue-500/0 via-blue-400/20 to-blue-500/0"
+                          animate={{
+                            x: ["100%", "-100%"],
+                          }}
+                          transition={{
+                            duration: 1,
+                            repeat: Infinity,
+                            ease: "linear"
+                          }}
+                        />
+                      )}
+                      
+                      <span className="relative z-10">
+                        Unit {unitNum}
+                        {unitNotesCount[unitNum] > 0 && (
+                          <Badge variant="outline" className="ml-2 text-xs border-blue-400 text-blue-300">
+                            {unitNotesCount[unitNum]} notes
+                          </Badge>
+                        )}
+                      </span>
+                    </Button>
+                  </motion.div>
                 ))}
+              
               {/* Important Questions Button */}
-              <Button
-                key="important-questions"
-                onClick={() => { handleUnitSelect(0); }}
-                className="w-full col-span-2 font-bold flex items-center justify-center gap-2 mt-2"
-                variant="default"
+              <motion.div
+                className="col-span-2"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onHoverStart={() => setHoveredUnit(0)}
+                onHoverEnd={() => setHoveredUnit(null)}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                Important Questions
-              </Button>
+                <Button
+                  key="important-questions"
+                  onClick={() => { handleUnitSelect(0); }}
+                  className={`w-full font-bold flex items-center justify-center gap-2 mt-2 relative overflow-hidden ${
+                    clickedUnit === 0 ? 'bg-amber-600 text-white' : 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
+                  }`}
+                  variant="default"
+                >
+                  {clickedUnit === 0 && (
+                    <motion.div
+                      className="absolute inset-0 bg-amber-400/30"
+                      initial={{ scale: 0, borderRadius: '100%' }}
+                      animate={{ scale: 2, borderRadius: '0%' }}
+                      transition={{ duration: 0.4 }}
+                    />
+                  )}
+                  
+                  {hoveredUnit === 0 && (
+                    <motion.div 
+                      className="absolute inset-0 bg-gradient-to-r from-amber-500/0 via-amber-400/20 to-amber-500/0"
+                      animate={{
+                        x: ["100%", "-100%"],
+                      }}
+                      transition={{
+                        duration: 1,
+                        repeat: Infinity,
+                        ease: "linear"
+                      }}
+                    />
+                  )}
+                  
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 relative z-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span className="relative z-10">
+                    Important Questions
+                    {unitNotesCount.importantQuestions > 0 && (
+                      <Badge variant="outline" className="ml-2 text-xs border-amber-400 text-amber-300">
+                        {unitNotesCount.importantQuestions} notes
+                      </Badge>
+                    )}
+                  </span>
+                </Button>
+              </motion.div>
+              
               {/* Previous Year Question Papers Button */}
-              <Button
-                key="previous-year-papers"
-                onClick={() => { alert('Previous Year Question Papers clicked!'); }}
-                className="w-full col-span-2 font-bold flex items-center justify-center gap-2 mt-2"
-                variant="default"
+              <motion.div
+                className="col-span-2"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onHoverStart={() => setHoveredUnit(-1)}
+                onHoverEnd={() => setHoveredUnit(null)}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m7-7v14" /></svg>
-                Previous Year Question Papers
-              </Button>
-            </div>
+                <Button
+                  key="previous-year-papers"
+                  onClick={handlePreviousYearPapers}
+                  className={`w-full font-bold flex items-center justify-center gap-2 mt-2 relative overflow-hidden ${
+                    clickedUnit === -1 ? 'bg-green-600 text-white' : 'bg-green-500/10 text-green-400 hover:bg-green-500/20'
+                  }`}
+                  variant="default"
+                >
+                  {clickedUnit === -1 && (
+                    <motion.div
+                      className="absolute inset-0 bg-green-400/30"
+                      initial={{ scale: 0, borderRadius: '100%' }}
+                      animate={{ scale: 2, borderRadius: '0%' }}
+                      transition={{ duration: 0.4 }}
+                    />
+                  )}
+                  
+                  {hoveredUnit === -1 && (
+                    <motion.div 
+                      className="absolute inset-0 bg-gradient-to-r from-green-500/0 via-green-400/20 to-green-500/0"
+                      animate={{
+                        x: ["100%", "-100%"],
+                      }}
+                      transition={{
+                        duration: 1,
+                        repeat: Infinity,
+                        ease: "linear"
+                      }}
+                    />
+                  )}
+                  
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 relative z-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m7-7v14" />
+                  </svg>
+                  <span className="relative z-10">
+                    Previous Year Question Papers
+                    {unitNotesCount.previousYearPapers > 0 && (
+                      <Badge variant="outline" className="ml-2 text-xs border-green-400 text-green-300">
+                        {unitNotesCount.previousYearPapers} papers
+                      </Badge>
+                    )}
+                  </span>
+                </Button>
+              </motion.div>
+            </motion.div>
           </DialogContent>
         </Dialog>
 

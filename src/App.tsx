@@ -11,6 +11,8 @@ import { testSupabaseConnection } from "@/lib/supabase";
 import { toast } from "sonner";
 import { AnimatePresence } from 'framer-motion';
 import { ThemeProvider } from "@/components/ThemeProvider";
+import VarmaBot from "./components/VarmaBot";
+import UploadNotesSticker from "./components/UploadNotesSticker";
 
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
@@ -206,6 +208,8 @@ const App = () => (
                 <main className="flex-1">
                   <AppRoutes />
                 </main>
+                <VarmaBot />
+                <UploadNotesSticker />
               </div>
             </AnimatePresence>
           </BrowserRouter>
