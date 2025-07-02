@@ -10,7 +10,7 @@ const LandingPage = ({ onGetStarted }: LandingPageProps) => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
       {/* Hero Section */}
-      <section className="container mx-auto px-4 py-20 text-center">
+      <section className="container mx-auto  px-4 py-20 text-center">
         <div className="animate-fade-in">
           <div className="inline-block mb-6">
             <div className="w-24 h-24 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center mx-auto animate-scale-in">

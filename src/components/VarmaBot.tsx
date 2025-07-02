@@ -214,5 +214,4 @@ export function VarmaBot() {
     </>
   );
 }
-
-export default VarmaBot; 
+export default VarmaBot;
